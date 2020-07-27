@@ -25,6 +25,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	http.HandleFunc("/ws", ws)
+	log.Println("Starting websocket server on :9000")
 	err := http.ListenAndServe(":9000", nil)
 	if err != nil {
 		log.Fatalf("error: %v\n", err)
