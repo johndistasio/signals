@@ -13,7 +13,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 
 	if err != nil {
-		log.Printf("error: %v\n", err)
+		log.Printf("error on websocket upgrade: %v\n", err)
 		w.WriteHeader(500)
 		return
 	}
