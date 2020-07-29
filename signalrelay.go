@@ -33,7 +33,7 @@ func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Co
 
 	conn.SetCloseHandler(func(code int, text string) error {
 		log.Println("close handler firing")
-		cancel()
+		StopSignalRelay(ctx, cancel, conn)
 		return nil
 	})
 
@@ -45,11 +45,24 @@ func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Co
 
 	// TODO: set up read/write size and time limits
 
-	go ReadSignal(ctx, rdb, conn)
-	go WriteSignal(ctx, rdb, conn)
+	go ReadSignal(ctx, cancel, rdb, conn)
+	go WriteSignal(ctx, cancel, rdb, conn)
 }
 
-func ReadSignal(ctx context.Context, rdb *redis.Client, conn *websocket.Conn) {
+func StopSignalRelay(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn) {
+	log.Println("StopSignalRelay firing")
+
+	if ctx.Err() == nil {
+		cancel()
+	}
+
+	_ = conn.Close()
+
+}
+
+func ReadSignal(ctx context.Context, cancel context.CancelFunc, rdb *redis.Client, conn *websocket.Conn) {
+	defer StopSignalRelay(ctx, cancel, conn)
+
 	token := conn.RemoteAddr().String()
 
 	for {
@@ -85,7 +98,9 @@ func ReadSignal(ctx context.Context, rdb *redis.Client, conn *websocket.Conn) {
 	}
 }
 
-func WriteSignal(ctx context.Context, rdb *redis.Client, conn *websocket.Conn) {
+func WriteSignal(ctx context.Context, cancel context.CancelFunc, rdb *redis.Client, conn *websocket.Conn) {
+	defer StopSignalRelay(ctx, cancel, conn)
+
 	// TODO shrink this ping time
 	ping := time.NewTicker(30 * time.Second)
 
@@ -98,12 +113,12 @@ func WriteSignal(ctx context.Context, rdb *redis.Client, conn *websocket.Conn) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Print("WriteSignal stopping on relay shutdown")
+			log.Printf("%s: WriteSignal stopping on relay shutdown\n", token)
 			return
 		case <-ping.C:
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
-					log.Printf("writer error on WriteMessage (pinger): %v\n", err)
+					log.Printf("%s: writer error on WriteMessage (pinger): %v\n", token, err)
 				}
 
 				return
@@ -124,9 +139,9 @@ func WriteSignal(ctx context.Context, rdb *redis.Client, conn *websocket.Conn) {
 
 			if err != nil {
 				if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
-					log.Printf("writer error on WriteMessage: %v\n", err)
+					log.Printf("%s: writer error on WriteMessage: %v\n", token, err)
 				} else {
-					log.Print("WriteSignal stopping on socket close")
+					log.Printf("%s: WriteSignal stopping on socket close\n", token)
 				}
 
 				return
