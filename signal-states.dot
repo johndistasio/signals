@@ -1,0 +1,6 @@
+digraph signaling {
+  init -> init [label="on room join failure"];
+  init -> peering [label="on room join success"];
+  peering -> peered [label="on sdp exchange success"];
+  peered -> peering [label="on new peer notification"];
+}
