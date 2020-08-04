@@ -45,6 +45,7 @@ func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Co
 
 	// TODO: set up read/write size and time limits
 
+
 	go ReadSignal(ctx, cancel, rdb, conn)
 	go WriteSignal(ctx, cancel, rdb, conn)
 }
@@ -57,7 +58,6 @@ func StopSignalRelay(ctx context.Context, cancel context.CancelFunc, conn *webso
 	}
 
 	_ = conn.Close()
-
 }
 
 func ReadSignal(ctx context.Context, cancel context.CancelFunc, rdb *redis.Client, conn *websocket.Conn) {
@@ -79,8 +79,6 @@ func ReadSignal(ctx context.Context, cancel context.CancelFunc, rdb *redis.Clien
 					log.Printf("reader error on ReadMessage: %v\n", err)
 				}
 
-				log.Println("ReadSignal stopping on socket close")
-
 				return
 			}
 
@@ -101,14 +99,16 @@ func ReadSignal(ctx context.Context, cancel context.CancelFunc, rdb *redis.Clien
 func WriteSignal(ctx context.Context, cancel context.CancelFunc, rdb *redis.Client, conn *websocket.Conn) {
 	defer StopSignalRelay(ctx, cancel, conn)
 
-	// TODO shrink this ping time
-	ping := time.NewTicker(30 * time.Second)
-
 	token := conn.RemoteAddr().String()
 
-	ch := rdb.Subscribe(ctx, channel)
+	// TODO shrink this ping time
+	ping := time.NewTicker(30 * time.Second)
+	defer ping.Stop()
 
+
+	ch := rdb.Subscribe(ctx, channel)
 	defer ch.Close()
+
 
 	for {
 		select {
@@ -124,6 +124,7 @@ func WriteSignal(ctx context.Context, cancel context.CancelFunc, rdb *redis.Clie
 				return
 			}
 		case message := <-ch.Channel():
+
 			bMessage := []byte(message.Payload)
 
 			var signal Signal
@@ -139,9 +140,7 @@ func WriteSignal(ctx context.Context, cancel context.CancelFunc, rdb *redis.Clie
 
 			if err != nil {
 				if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
-					log.Printf("%s: writer error on WriteMessage: %v\n", token, err)
-				} else {
-					log.Printf("%s: WriteSignal stopping on socket close\n", token)
+					log.Printf("%s: unexpected error on WriteMessage: %v\n", token, err)
 				}
 
 				return
@@ -151,41 +150,3 @@ func WriteSignal(ctx context.Context, cancel context.CancelFunc, rdb *redis.Clie
 		}
 	}
 }
-
-/*
-func register(ctx context.Context, rdb *redis.Client, conn *websocket.Conn) (bool, error) {
-	registered := false
-
-	// get members hash for room
-	members, err := rdb.HGetAll(ctx, room).Result()
-
-	if err != nil {
-		return registered, err
-	}
-
-	// TODO use some kind of token as a client ID instead of remote address
-	token := conn.RemoteAddr().String()
-
-
-	// if we're in there, or if we aren't in there and len < 2, add ourselves and update room expiration
-	if len(members) < 2 || members[token] != "" {
-		pipe := rdb.TxPipeline()
-
-		pipe.HSet(ctx, room, token, time.Now().Unix())
-
-		// (Re)set expiration time on the clients table
-		// TODO shrink this timeout
-		pipe.Expire(ctx, room, 1*time.Minute)
-
-		_, err = pipe.Exec(ctx)
-	}
-
-	// TODO need to kick out members that have been there for too long without a timestamp update
-
-	// else the room is full
-
-	// TODO return an error to the client when the room is full
-
-	return registered, err
-}
-*/
