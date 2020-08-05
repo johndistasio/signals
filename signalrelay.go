@@ -11,14 +11,15 @@ import (
 )
 
 // TODO allow for arbitrary rooms
-var room = "room:test"
-var channel = "channel:test"
-
+var room = "test"
+var channelPrefix = "channel:"
+var seatPrefix = "seat:" + room + ":"
 
 // TODO replace with members
 var PongTimeout = 60 * time.Second
 var WriteTimeout = 10 * time.Second
 var PingInterval = 30 * time.Second
+var ReadLimit int64 = 512
 
 type SignalRelay struct {
 	// Max time between received pongs. If this timeout elapses, we consider the client to be dead.
@@ -32,13 +33,24 @@ type SignalRelay struct {
 
 	id string
 
-	ctx context.Context
-
-	cancel context.CancelFunc
-
 	conn *websocket.Conn
 
 	rdb *redis.Client
+
+	seat seat
+}
+
+type seat struct {
+	room string
+	id string
+}
+
+func (s *seat) key() string {
+	return "seat:" + s.room + ":" + s.id
+}
+
+func (s *seat) channelKey() string {
+	return "channel:" + s.room
 }
 
 type Signal struct {
@@ -46,104 +58,94 @@ type Signal struct {
 	Message string
 }
 
-func (r *SignalRelay) stop() {
-	if r.ctx.Err() == nil {
-		r.cancel()
-	}
-
-	_ = r.conn.Close()
-}
-
 func StartSignalRelay(ctx context.Context, id string, rdb *redis.Client, conn *websocket.Conn) {
-	ctx, cancel := context.WithCancel(ctx)
+
+	// TODO store id in the db with some kind of long expiration?
+	// not sure if we'll need to worry about securing sessions specific to this service if auth is handled elsewhere
 
 	relay := &SignalRelay{
 		PongTimeout: PongTimeout,
 		WriteTimeout: WriteTimeout,
 		PingInterval: PingInterval,
 		id: id,
-		ctx: ctx,
-		cancel: cancel,
 		rdb: rdb,
 		conn: conn,
+		seat: seat{room, "0"},
 	}
 
 	conn.SetCloseHandler(func(code int, text string) error {
 		log.Println("close handler firing")
-		relay.stop()
 		return nil
 	})
 
 	conn.SetPongHandler(func(appData string) error {
 		log.Println("pong handler firing")
 
+		// If this errors then the underlying connection is in a bad state, which is unrecoverable.
 		err := conn.SetReadDeadline(time.Now().Add(PongTimeout))
 
-		if err != nil {
-			// If this errors then the underlying network connection is borked.
-			log.Println("error on SetReadDeadline")
-			relay.stop()
+		if err == nil {
+			// TODO reset peering key expiration
 		}
-
-		// TODO reset peering key expiration
 
 		return err
 	})
 
-	// TODO: set up read/write size and time limits
+	conn.SetReadLimit(ReadLimit)
 
 	go relay.ReadSignal()
 	go relay.WriteSignal()
+}
+
+func (r *SignalRelay) stop() {
+	_ = r.conn.Close()
+}
+
+func isSocketCloseError(err error) bool {
+	if err == websocket.ErrReadLimit {
+		// If the client wrote more bytes than is allowed then te socket will be closed.
+		return true
+	}
+
+	if _, ok := err.(*websocket.CloseError); ok {
+		return true
+	}
+
+	if strings.Contains(err.Error(), "use of closed network connection") {
+		// There doesn't seem to be a better way to detect this error from Go's TCP library. Their own
+		// HTTP/2 code does this exact string comparison when checking for a socket close, too.
+		return true
+	}
+
+	return false
 }
 
 func (r *SignalRelay) ReadSignal() {
 	defer r.stop()
 
 	for {
-		select {
-		case <-r.ctx.Done():
-			log.Println("ReadSignal stopping on relay shutdown")
+		// On socket close, this will return an error.
+		_, message, err := r.conn.ReadMessage()
+
+		if err != nil {
+			if !isSocketCloseError(err) {
+				log.Printf("%s: reader error on ReadMessage: %v\n", r.id, err)
+			}
 			return
-		default:
-			// TODO tracing
-			ctx := context.Background()
+		}
 
-			// On socket close, this will return an error.
-			_, message, err := r.conn.ReadMessage()
+		msg, err := json.Marshal(Signal{r.id, string(message)})
 
-			if err != nil {
-				if _, ok := err.(*websocket.CloseError); ok {
-					log.Println("reader stopping on closed websocket")
-					// Halt on socket close.
-					return
-				}
+		if err != nil {
+			log.Printf("%s: error on serializing message: %v\n", r.id, err)
+			return
+		}
 
-				if strings.Contains(err.Error(), "use of closed network connection") {
-					log.Println("reader stopping on closed socket")
-					// Halt on socket close.
-					// There doesn't seem to be a better way to detect this error from Go's TCP library. Their own
-					// HTTP/2 code does this exact string comparison when checking for a socket close, too.
-					return
-				}
+		err = rdb.Publish(context.TODO(), channelPrefix+room, msg).Err()
 
-				log.Printf("reader error on ReadMessage: %v\n", err)
-
-				// TODO alert the client of failure
-
-				// TODO are there other error cases when we'd like to halt the reader here?
-				continue
-			}
-
-			// TODO handle error
-			msg, _ := json.Marshal(Signal{r.id, string(message)})
-
-			err = rdb.Publish(ctx, channel, msg).Err()
-
-			if err != nil {
-				log.Printf("error on publish to redis: %v\n", err)
-
-				// TODO add backoff, and figure out how to alert the client of successive failures
-			}
+		if err != nil {
+			log.Printf("%s: error on publish to redis: %v\n", r.id, err)
+			return
 		}
 	}
 }
@@ -152,19 +154,15 @@ func (r *SignalRelay) WriteSignal() {
 	ping := time.NewTicker(PingInterval)
 
 	// TODO subscription needs it's own context and setup function
-	ch := rdb.Subscribe(r.ctx, channel)
+	ch := rdb.Subscribe(context.TODO(), channelPrefix+room)
 
 	defer func() {
-		_ = ch.Close()
 		ping.Stop()
 		r.stop()
 	}()
 
 	for {
 		select {
-		case <-r.ctx.Done():
-			log.Printf("%s: WriteSignal stopping on relay shutdown\n", r.id)
-			return
 		case <-ping.C:
 			if err := r.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
@@ -173,20 +171,28 @@ func (r *SignalRelay) WriteSignal() {
 
 				return
 			}
-		case message := <-ch.Channel():
+		case message, ok := <-ch.Channel():
+			if !ok {
+				log.Printf("%s: redis subscription channel closed\n", r.id)
+				return
+			}
 
 			bMessage := []byte(message.Payload)
 
 			var signal Signal
 
-			// TODO handle error
-			_ = json.Unmarshal(bMessage, &signal)
+			err := json.Unmarshal(bMessage, &signal)
+
+			if err != nil {
+				log.Printf("%s: error on deserializing message: %v\n", r.id, err)
+				return
+			}
 
 			if signal.PeerId == r.id {
 				continue
 			}
 
-			err := r.conn.WriteMessage(websocket.TextMessage, bMessage)
+			err = r.conn.WriteMessage(websocket.TextMessage, bMessage)
 
 			if err != nil {
 				if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
