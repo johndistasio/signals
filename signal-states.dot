@@ -1,10 +1,12 @@
 digraph signaling {
   init [style="filled",fillcolor="dodgerblue"];
+  error [style="filled", fillcolor="firebrick1"];
 
-  {joining, joined, peering, peered} -> init [label="on failure"];
   init -> joining [label="on connection success"];
-  //joining -> init [label="on room join failure"];
+  init -> error [label="on connection failure"];
+
+  joining -> error [label="on room full"];
+
   joining -> joined [label="on room join success"];
-  joined -> peering [label="on peer join notification"];
-  peering -> peered [label="on sdp exchange success"];
 }
+
