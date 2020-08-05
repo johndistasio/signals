@@ -1,12 +1,20 @@
 digraph signaling {
-  init [style="filled",fillcolor="dodgerblue"];
-  error [style="filled", fillcolor="firebrick1"];
+  CONNECTING [style="filled", fillcolor="dodgerblue"];
 
-  init -> joining [label="on connection success"];
-  init -> error [label="on connection failure"];
+  CLOSED_ERR [style="filled", fillcolor="firebrick1"];
 
-  joining -> error [label="on room full"];
+  CLOSED_OK [style="filled", fillcolor="green3"];
 
-  joining -> joined [label="on room join success"];
+  CONNECTING -> CONNECTED [label="websocket connection established"];
+
+  CONNECTED -> JOINING [label="room join request received"];
+
+  JOINING -> JOINED [label="room join successful"];
+
+  JOINED -> SUBSCRIBED [label="room subscription successful"];
+
+  {CONNECTING, CONNECTED, JOINING, JOINED, SUBSCRIBED} -> CLOSED_ERR [label="on error"];
+
+  SUBSCRIBED -> CLOSED_OK [label="on client close"];
 }
 
