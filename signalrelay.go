@@ -7,6 +7,7 @@ import (
 	"github.com/gorilla/websocket"
 	"log"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,6 +37,11 @@ type SignalRelay struct {
 	conn *websocket.Conn
 
 	rdb *redis.Client
+
+
+	closeOnce *sync.Once
+	closeReader chan struct{}
+	closeWriter chan struct{}
 
 	seat seat
 }
@@ -71,10 +77,18 @@ func StartSignalRelay(ctx context.Context, id string, rdb *redis.Client, conn *w
 		rdb: rdb,
 		conn: conn,
 
+		closeOnce: new(sync.Once),
+		closeReader: make(chan struct{}),
+		closeWriter: make(chan struct{}),
+
 
 		seat: seat{room, "0"},
 	}
 
+	conn.SetCloseHandler(func (code int, text string) error {
+		relay.Stop(ctx)
+		return nil
+	})
 
 	conn.SetPongHandler(func(appData string) error {
 		log.Println("pong handler firing")
@@ -97,6 +111,13 @@ func StartSignalRelay(ctx context.Context, id string, rdb *redis.Client, conn *w
 	go relay.WriteSignal(ctx)
 }
 
+func (r *SignalRelay) Stop(ctx context.Context) {
+	r.closeOnce.Do(func() {
+		close(r.closeReader)
+		close(r.closeWriter)
+		_ = r.conn.Close()
+	})
+}
 
 func isSocketCloseError(err error) bool {
 	if err == websocket.ErrReadLimit {
@@ -118,34 +139,59 @@ func isSocketCloseError(err error) bool {
 }
 
 func (r *SignalRelay) ReadSignal(ctx context.Context) {
-	defer r.conn.Close()
+	defer r.Stop(ctx)
 
-	for {
-		// This will block until it reads something or the socket closes, in which case tt will return an error.
-		_, message, err := r.conn.ReadMessage()
+	readChan := make(chan []byte)
 
-		if err != nil {
-			if !isSocketCloseError(err) || ctx.Err() == nil {
-				log.Printf("%s: reader error on ReadMessage: %v\n", r.id, err)
-			} else {
-				log.Printf("%s: expected socket closure on Readmessage: %v\n", r.id, err)
+	go func() {
+		for {
+			// This will block until it reads something or the socket closes, in which case it will return an error.
+			_, message, err := r.conn.ReadMessage()
+
+			if err != nil {
+				if !isSocketCloseError(err) {
+					log.Printf("%s: reader error on ReadMessage: %v\n", r.id, err)
+				} else {
+					log.Printf("%s: expected socket closure on Readmessage: %v\n", r.id, err)
+				}
+
+				close(readChan)
+				return
 			}
 
-			return
+			readChan <- message
 		}
+	}()
 
-		msg, err := json.Marshal(Signal{r.id, string(message)})
-
-		if err != nil {
-			log.Printf("%s: error on serializing message: %v\n", r.id, err)
+	for {
+		select {
+		case <-r.closeReader:
+			log.Printf("%s: reader stopping on close chan\n", r.id)
 			return
-		}
-
-		err = rdb.Publish(context.TODO(), channelPrefix+room, msg).Err()
-
-		if err != nil {
-			log.Printf("%s: error on publish to redis: %v\n", r.id, err)
+		case <-ctx.Done():
+			log.Printf("%s: reader stopping: %v\n", r.id, ctx.Err())
 			return
+		case message, ok := <-readChan:
+			if !ok {
+				log.Printf("%s: reader stopping on readChan: %v\n", r.id, ok)
+				return
+			}
+
+			msg, err := json.Marshal(Signal{r.id, string(message)})
+
+			if err != nil {
+				log.Printf("%s: error on serializing message: %v\n", r.id, err)
+				return
+			}
+
+			err = rdb.Publish(context.TODO(), channelPrefix+room, msg).Err()
+
+			if err != nil {
+				log.Printf("%s: error on publish to redis: %v\n", r.id, err)
+				return
+			}
+		default:
+			// intentionally does nothing
 		}
 	}
 }
@@ -158,12 +204,16 @@ func (r *SignalRelay) WriteSignal(ctx context.Context) {
 
 	defer func() {
 		ping.Stop()
-		r.conn.Close()
+		r.Stop(ctx)
 	}()
 
 	for {
 		select {
+		case <-r.closeWriter:
+			log.Printf("%s: writer stopping on close chan\n", r.id)
+			return
 		case <-ctx.Done():
+			log.Printf("%s: writer stopping: %v\n", r.id, ctx.Err())
 			return
 		case <-ping.C:
 			if err := r.conn.WriteMessage(websocket.PingMessage, nil); err != nil {

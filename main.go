@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
+	"time"
 )
 
 var upgrader = websocket.Upgrader{}
@@ -33,9 +34,10 @@ func ws(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go StartSignalRelay(context.Background(), id, rdb, conn)
+	//go StartSignalRelay(context.Background(), id, rdb, conn)
 
-	//ctx, _ := context.WithTimeout(context.Background(), 10 * time.Second)
+	ctx, _ := context.WithTimeout(context.Background(), 30 * time.Second)
+	go StartSignalRelay(ctx, id, rdb, conn)
 }
 
 func main() {
