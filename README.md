@@ -22,6 +22,8 @@ These are the states a signaling session moves through.
 
 ![Signaling Service State Diagram](signal-states.png)
 
+The conditions required to transition between states are expanded upon below.
+
 * numbered list == all of these things are true
 * bulleted list == at least one of these things are true
 
@@ -65,3 +67,4 @@ These are less important to track.
 ## Signaling Protocol
 
 TODO
+

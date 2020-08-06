@@ -1,9 +1,10 @@
 digraph signaling {
-  CONNECTING [style="filled", fillcolor="dodgerblue"];
-
+  CLOSED_OK [style="filled", fillcolor="green3"];
   CLOSED_ERR [style="filled", fillcolor="firebrick1"];
 
-  CLOSED_OK [style="filled", fillcolor="green3"];
+  CONNECTING [style="filled", fillcolor="dodgerblue"];
+
+  CONNECTING -> CONNECTING [label="on error"];
 
   CONNECTING -> CONNECTED [label="websocket connection established"];
 
@@ -13,7 +14,7 @@ digraph signaling {
 
   JOINED -> SUBSCRIBED [label="room subscription successful"];
 
-  {CONNECTING, CONNECTED, JOINING, JOINED, SUBSCRIBED} -> CLOSED_ERR [label="on error"];
+  {CONNECTED, JOINING, JOINED, SUBSCRIBED} -> CLOSED_ERR [label="on error"];
 
   SUBSCRIBED -> CLOSED_OK [label="on client close"];
 }
