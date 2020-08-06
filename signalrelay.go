@@ -17,21 +17,30 @@ var room = "test"
 var channelPrefix = "channel:"
 var seatPrefix = "seat:" + room + ":"
 
-// TODO replace with members
-var PongTimeout = 60 * time.Second
-var WriteTimeout = 10 * time.Second
-var PingInterval = 30 * time.Second
-var ReadLimit int64 = 512
+var DefaultPongTimeout = 60 * time.Second
+var DefaultWriteTimeout = 10 * time.Second
+var DefaultPingInterval = 30 * time.Second
+var DefaultReadLimit int64 = 512
 
-type SignalRelay struct {
-	// Max time between received pongs. If this timeout elapses, we consider the client to be dead.
-	PongTimeout time.Duration
-
+type SignalRelayOptions struct {
 	// Max time for message writes to the client. If this timeout elapses, we consider the client to be dead.
 	WriteTimeout time.Duration
 
+	// Max time between received pongs. If this timeout elapses, we consider the client to be dead.
+	PongTimeout time.Duration
+
 	// Time between pings sent to the client. Must be less than PongTimeout to give the client a chance to respond.
 	PingInterval time.Duration
+
+	// Limit (in bytes) on message reads.
+	ReadLimit int64
+}
+
+type SignalRelay struct {
+	pingInterval time.Duration
+	pongTimeout time.Duration
+	writeTimeout time.Duration
+	readLimit int64
 
 	id string
 
@@ -65,7 +74,7 @@ type Signal struct {
 	Message string
 }
 
-func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Conn) (sessionId string, err error) {
+func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Conn, opts *SignalRelayOptions) (sessionId string, err error) {
 	id, err :=  ksuid.NewRandom()
 
 	if err != nil {
@@ -74,13 +83,27 @@ func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Co
 
 	sessionId = id.String()
 
-	// TODO store id in the db with some kind of long expiration?
-	// not sure if we'll need to worry about securing sessions specific to this service if auth is handled elsewhere
+	if opts.PongTimeout < 1 {
+		opts.PongTimeout = DefaultPongTimeout
+	}
+
+	if opts.WriteTimeout < 1 {
+		opts.WriteTimeout = DefaultWriteTimeout
+	}
+
+	if opts.PingInterval < 1 {
+		opts.PingInterval = DefaultPingInterval
+	}
+
+	if opts.ReadLimit < 1 {
+		opts.ReadLimit = DefaultReadLimit
+	}
 
 	relay := &SignalRelay{
-		PongTimeout: PongTimeout,
-		WriteTimeout: WriteTimeout,
-		PingInterval: PingInterval,
+		pongTimeout: opts.PongTimeout,
+		writeTimeout: opts.WriteTimeout,
+		pingInterval: opts.PingInterval,
+		readLimit: opts.ReadLimit,
 		id: sessionId,
 		rdb: rdb,
 		conn: conn,
@@ -88,7 +111,6 @@ func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Co
 		closeOnce: new(sync.Once),
 		closeReader: make(chan struct{}),
 		closeWriter: make(chan struct{}),
-
 
 		seat: seat{room, "0"},
 	}
@@ -102,7 +124,7 @@ func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Co
 		log.Println("pong handler firing")
 
 		// If this errors then the underlying connection is in a bad state, which is unrecoverable.
-		err := conn.SetReadDeadline(time.Now().Add(PongTimeout))
+		err := conn.SetReadDeadline(time.Now().Add(relay.pongTimeout))
 
 		if err != nil {
 			return err
@@ -113,7 +135,7 @@ func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Co
 		return err
 	})
 
-	conn.SetReadLimit(ReadLimit)
+	conn.SetReadLimit(relay.readLimit)
 
 	go relay.ReadSignal(ctx)
 	go relay.WriteSignal(ctx)
@@ -207,7 +229,7 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 }
 
 func (r *SignalRelay) WriteSignal(ctx context.Context) {
-	ping := time.NewTicker(r.PingInterval)
+	ping := time.NewTicker(r.pingInterval)
 
 	// TODO subscription needs it's own context and setup function
 	ch := rdb.Subscribe(ctx, channelPrefix+room)

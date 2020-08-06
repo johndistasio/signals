@@ -24,16 +24,15 @@ func ws(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 
 	if err != nil {
+		// The upgrader has already written the error out to the client so we don't need to.
 		log.Printf("error on websocket upgrade: %v\n", err)
-		// TODO validate that this is the correct behavior
-		w.WriteHeader(500)
 		return
 	}
 
 	log.Printf("new websocket connection from %s\n", r.RemoteAddr)
 
 	// TODO populate a trace with the returned session ID or error
-	_, _ = StartSignalRelay(context.Background(), rdb, conn)
+	_, _ = StartSignalRelay(context.Background(), rdb, conn, &SignalRelayOptions{})
 }
 
 func main() {
