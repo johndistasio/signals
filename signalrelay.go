@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
+	"github.com/segmentio/ksuid"
 	"log"
 	"strings"
 	"sync"
@@ -64,7 +65,14 @@ type Signal struct {
 	Message string
 }
 
-func StartSignalRelay(ctx context.Context, id string, rdb *redis.Client, conn *websocket.Conn) {
+func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Conn) (sessionId string, err error) {
+	id, err :=  ksuid.NewRandom()
+
+	if err != nil {
+		return sessionId, err
+	}
+
+	sessionId = id.String()
 
 	// TODO store id in the db with some kind of long expiration?
 	// not sure if we'll need to worry about securing sessions specific to this service if auth is handled elsewhere
@@ -73,7 +81,7 @@ func StartSignalRelay(ctx context.Context, id string, rdb *redis.Client, conn *w
 		PongTimeout: PongTimeout,
 		WriteTimeout: WriteTimeout,
 		PingInterval: PingInterval,
-		id: id,
+		id: sessionId,
 		rdb: rdb,
 		conn: conn,
 
@@ -109,6 +117,8 @@ func StartSignalRelay(ctx context.Context, id string, rdb *redis.Client, conn *w
 
 	go relay.ReadSignal(ctx)
 	go relay.WriteSignal(ctx)
+
+	return sessionId, err
 }
 
 func (r *SignalRelay) Stop(ctx context.Context) {

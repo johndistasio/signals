@@ -4,11 +4,9 @@ import (
 	"context"
 	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
-	"github.com/segmentio/ksuid"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
-	"time"
 )
 
 var upgrader = websocket.Upgrader{}
@@ -20,10 +18,8 @@ var rdb = redis.NewClient(&redis.Options{
 })
 
 
-func ws(w http.ResponseWriter, r *http.Request) {
-	id :=  ksuid.New().String()
 
-	log.Printf("new websocket connection from %s as id %s\n", r.RemoteAddr, id)
+func ws(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 
@@ -34,10 +30,10 @@ func ws(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//go StartSignalRelay(context.Background(), id, rdb, conn)
+	log.Printf("new websocket connection from %s\n", r.RemoteAddr)
 
-	ctx, _ := context.WithTimeout(context.Background(), 30 * time.Second)
-	go StartSignalRelay(ctx, id, rdb, conn)
+	// TODO populate a trace with the returned session ID or error
+	_, _ = StartSignalRelay(context.Background(), rdb, conn)
 }
 
 func main() {
