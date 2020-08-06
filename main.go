@@ -7,6 +7,7 @@ import (
 	"github.com/segmentio/ksuid"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 )
 
 var upgrader = websocket.Upgrader{}
@@ -33,6 +34,8 @@ func ws(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go StartSignalRelay(context.Background(), id, rdb, conn)
+
+	//ctx, _ := context.WithTimeout(context.Background(), 10 * time.Second)
 }
 
 func main() {

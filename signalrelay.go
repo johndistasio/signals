@@ -70,13 +70,11 @@ func StartSignalRelay(ctx context.Context, id string, rdb *redis.Client, conn *w
 		id: id,
 		rdb: rdb,
 		conn: conn,
+
+
 		seat: seat{room, "0"},
 	}
 
-	conn.SetCloseHandler(func(code int, text string) error {
-		log.Println("close handler firing")
-		return nil
-	})
 
 	conn.SetPongHandler(func(appData string) error {
 		log.Println("pong handler firing")
@@ -84,22 +82,21 @@ func StartSignalRelay(ctx context.Context, id string, rdb *redis.Client, conn *w
 		// If this errors then the underlying connection is in a bad state, which is unrecoverable.
 		err := conn.SetReadDeadline(time.Now().Add(PongTimeout))
 
-		if err == nil {
-			// TODO reset peering key expiration
+		if err != nil {
+			return err
 		}
+
+		// TODO reset peering key expiration
 
 		return err
 	})
 
 	conn.SetReadLimit(ReadLimit)
 
-	go relay.ReadSignal()
-	go relay.WriteSignal()
+	go relay.ReadSignal(ctx)
+	go relay.WriteSignal(ctx)
 }
 
-func (r *SignalRelay) stop() {
-	_ = r.conn.Close()
-}
 
 func isSocketCloseError(err error) bool {
 	if err == websocket.ErrReadLimit {
@@ -120,17 +117,20 @@ func isSocketCloseError(err error) bool {
 	return false
 }
 
-func (r *SignalRelay) ReadSignal() {
-	defer r.stop()
+func (r *SignalRelay) ReadSignal(ctx context.Context) {
+	defer r.conn.Close()
 
 	for {
-		// On socket close, this will return an error.
+		// This will block until it reads something or the socket closes, in which case tt will return an error.
 		_, message, err := r.conn.ReadMessage()
 
 		if err != nil {
-			if !isSocketCloseError(err) {
+			if !isSocketCloseError(err) || ctx.Err() == nil {
 				log.Printf("%s: reader error on ReadMessage: %v\n", r.id, err)
+			} else {
+				log.Printf("%s: expected socket closure on Readmessage: %v\n", r.id, err)
 			}
+
 			return
 		}
 
@@ -150,19 +150,21 @@ func (r *SignalRelay) ReadSignal() {
 	}
 }
 
-func (r *SignalRelay) WriteSignal() {
-	ping := time.NewTicker(PingInterval)
+func (r *SignalRelay) WriteSignal(ctx context.Context) {
+	ping := time.NewTicker(r.PingInterval)
 
 	// TODO subscription needs it's own context and setup function
-	ch := rdb.Subscribe(context.TODO(), channelPrefix+room)
+	ch := rdb.Subscribe(ctx, channelPrefix+room)
 
 	defer func() {
 		ping.Stop()
-		r.stop()
+		r.conn.Close()
 	}()
 
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-ping.C:
 			if err := r.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
