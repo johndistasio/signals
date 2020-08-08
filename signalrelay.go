@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
 	"github.com/segmentio/ksuid"
 	"log"
@@ -14,8 +13,6 @@ import (
 
 // TODO allow for arbitrary rooms
 var room = "test"
-var channelPrefix = "channel:"
-var seatPrefix = "seat:" + room + ":"
 
 var DefaultPongTimeout = 60 * time.Second
 var DefaultWriteTimeout = 10 * time.Second
@@ -46,7 +43,7 @@ type SignalRelay struct {
 
 	conn *websocket.Conn
 
-	rdb *redis.Client
+	rdb Redis
 
 
 	closeOnce *sync.Once
@@ -54,6 +51,9 @@ type SignalRelay struct {
 	closeWriter chan struct{}
 
 	seat seat
+
+
+	room Room
 }
 
 type seat struct {
@@ -74,7 +74,7 @@ type Signal struct {
 	Message string
 }
 
-func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Conn, opts *SignalRelayOptions) (sessionId string, err error) {
+func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts *SignalRelayOptions) (sessionId string, err error) {
 	id, err :=  ksuid.NewRandom()
 
 	if err != nil {
@@ -99,6 +99,10 @@ func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Co
 		opts.ReadLimit = DefaultReadLimit
 	}
 
+	rr := &RedisRoom{name: room, rdb: rdb}
+
+	rr.Join(ctx)
+
 	relay := &SignalRelay{
 		pongTimeout: opts.PongTimeout,
 		writeTimeout: opts.WriteTimeout,
@@ -107,6 +111,8 @@ func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Co
 		id: sessionId,
 		rdb: rdb,
 		conn: conn,
+
+		room: rr,
 
 		closeOnce: new(sync.Once),
 		closeReader: make(chan struct{}),
@@ -145,6 +151,7 @@ func StartSignalRelay(ctx context.Context, rdb *redis.Client, conn *websocket.Co
 
 func (r *SignalRelay) Stop(ctx context.Context) {
 	r.closeOnce.Do(func() {
+		r.room.Leave(ctx)
 		close(r.closeReader)
 		close(r.closeWriter)
 		_ = r.conn.Close()
@@ -168,6 +175,15 @@ func isSocketCloseError(err error) bool {
 	}
 
 	return false
+}
+
+func ch(f func() []byte) <-chan []byte {
+	ch := make(chan []byte, 1)
+
+	ch <- f()
+
+	defer close(ch)
+	return ch
 }
 
 func (r *SignalRelay) ReadSignal(ctx context.Context) {
@@ -216,10 +232,10 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 				return
 			}
 
-			err = rdb.Publish(context.TODO(), channelPrefix+room, msg).Err()
+			err = r.room.Publish(ctx, msg)
 
 			if err != nil {
-				log.Printf("%s: error on publish to redis: %v\n", r.id, err)
+				log.Printf("%s: error on publish to room: %v\n", r.id, err)
 				return
 			}
 		default:
@@ -231,12 +247,27 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 func (r *SignalRelay) WriteSignal(ctx context.Context) {
 	ping := time.NewTicker(r.pingInterval)
 
-	// TODO subscription needs it's own context and setup function
-	ch := rdb.Subscribe(ctx, channelPrefix+room)
-
 	defer func() {
 		ping.Stop()
 		r.Stop(ctx)
+	}()
+
+	writeChan := make(chan []byte)
+
+
+	// FIXME this will leak
+	go func() {
+		for {
+			msg, err := r.room.Receive(ctx)
+
+			if err != nil {
+				log.Printf("%s: writer stopping on WriteMessage (room): %v\n", r.id, err)
+				close(writeChan)
+				return
+			}
+
+			writeChan <- msg
+		}
 	}()
 
 	for {
@@ -255,17 +286,15 @@ func (r *SignalRelay) WriteSignal(ctx context.Context) {
 
 				return
 			}
-		case message, ok := <-ch.Channel():
+		case message, ok := <-writeChan:
 			if !ok {
-				log.Printf("%s: redis subscription channel closed\n", r.id)
+				log.Printf("%s: writer stopping on writeCHan : %v\n", r.id, ok)
 				return
 			}
 
-			bMessage := []byte(message.Payload)
-
 			var signal Signal
 
-			err := json.Unmarshal(bMessage, &signal)
+			err := json.Unmarshal(message, &signal)
 
 			if err != nil {
 				log.Printf("%s: error on deserializing message: %v\n", r.id, err)
@@ -276,7 +305,7 @@ func (r *SignalRelay) WriteSignal(ctx context.Context) {
 				continue
 			}
 
-			err = r.conn.WriteMessage(websocket.TextMessage, bMessage)
+			err = r.conn.WriteMessage(websocket.TextMessage, message)
 
 			if err != nil {
 				if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {

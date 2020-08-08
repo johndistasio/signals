@@ -1,68 +1,32 @@
 package main
 
 import (
+	"context"
 	"errors"
-	"sync"
 )
 
-type Room struct {
-	clients []*TimeTicker
-	mu *sync.Mutex
-}
+var ErrRoomFull = errors.New("room full")
 
-func NewRoom() *Room {
-	return &Room{
-		clients: make([]*TimeTicker, 0),
-		mu: &sync.Mutex{},
-	}
-}
+var ErrRoomGone = errors.New("room backend gone")
 
-type Rooms struct {
-	rooms map[string]*Room
-	mu *sync.Mutex
-}
+type Room interface {
+	// Name returns the identifier for the room.
+	Name() string
 
-func NewRooms() *Rooms {
-	return &Rooms{
-		rooms: make(map[string]*Room),
-		mu: &sync.Mutex{},
-	}
-}
+	// Join or re-join the room. Returns ErrRoomFull if there are no more empty seats or ErrRoomGone if the
+	// reservation could not be completed.
+	Join(ctx context.Context) error
 
-func (r *Rooms) CreateRoom(room string, client *TimeTicker) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	// Leave the room. This should always succeed; either we were able to successfully revoke our reservation, or we
+	// were unable to connect with reservation backend and our reservation expire. In the case of the latter, we return
+	// an ErrRoomGone as a hint to the caller about the state of the backend.
+	Leave(ctx context.Context) error
 
-	if _, exists := r.rooms[room]; exists {
-		return errors.New("exists")
-	}
+	// Publish a message to other members of the room. No-op if we haven't yet joined a room. Returns an ErrRoomGone
+	// if we could not communicate with the messaging backend.
+	Publish(ctx context.Context, message []byte) error
 
-	r.rooms[room] = NewRoom()
-
-	return r.joinRoom(room, client)
-
-}
-
-func (r *Rooms) JoinRoom(room string, client *TimeTicker) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if _, exists := r.rooms[room]; !exists {
-		return errors.New("missing")
-	}
-
-	return r.joinRoom(room, client)
-}
-
-func (r *Rooms) joinRoom(room string, client *TimeTicker) error {
-	r.rooms[room].mu.Lock()
-	defer r.rooms[room].mu.Unlock()
-
-	if len(r.rooms[room].clients) > 2 {
-		return errors.New("full")
-	}
-
-	r.rooms[room].clients = append(r.rooms[room].clients, client)
-
-	return nil
+	// Receive a message from other members of the room. No-op if we haven't yet joined a room. Returns an ErrRoomGone
+	// if we could not communicate with the messaging backend.
+	Receive(ctx context.Context) ([]byte, error)
 }
