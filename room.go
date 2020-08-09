@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 var ErrRoomFull = errors.New("room full")
@@ -13,9 +14,9 @@ type Room interface {
 	// Name returns the identifier for the room.
 	Name() string
 
-	// Join the room (or renew the reservation) using the given reservation ID. Returns ErrRoomFull if there are no more
-	// empty seats or ErrRoomGone if the reservation could not be completed.
-	Join(ctx context.Context, id string) error
+	// Join the room (or renew the reservation) using the given reservation ID and duration.
+	// Returns ErrRoomFull if there are no more  empty seats or ErrRoomGone if the reservation could not be completed.
+	Join(ctx context.Context, id string, t time.Duration) error
 
 	// Leave the room by relinquishing the reservation with the given ID.
 	//

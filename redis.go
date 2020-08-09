@@ -38,17 +38,15 @@ const roomKeyPrefix = "room:"
 
 const roomSize = 2
 
-const roomTimeout = 30
-
 func (r *RedisRoom) key() string {
 	return roomKeyPrefix + r.name
 }
 
-func (r *RedisRoom) Join(ctx context.Context, id string) error {
+func (r *RedisRoom) Join(ctx context.Context, id string, t time.Duration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if err := r.acquire(ctx, id); err != nil {
+	if err := r.acquire(ctx, id, t); err != nil {
 		return err
 	}
 
@@ -82,12 +80,11 @@ var acquireScript = redis.NewScript(`
 
 // TODO how do we test this... make script a param?
 
-func (r *RedisRoom) acquire(ctx context.Context, id string) error {
-	// TODO nano
-	now := time.Now().Unix()
-	old := now - roomTimeout
+func (r *RedisRoom) acquire(ctx context.Context, id string, t time.Duration) error {
+	now := time.Now()
+	then := now.Add(t)
 
-	acq, err := acquireScript.Run(ctx, r.rdb, []string{r.key()}, old, roomSize, now, id).Result()
+	acq, err := acquireScript.Run(ctx, r.rdb, []string{r.key()}, then.Unix(), roomSize, now.Unix(), id).Result()
 
 	if err != nil {
 		return ErrRoomGone

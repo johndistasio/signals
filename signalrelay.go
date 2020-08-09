@@ -86,7 +86,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 
 	rr := &RedisRoom{name: room, rdb: rdb}
 
-	rr.Join(ctx, sessionId)
+	rr.Join(ctx, sessionId, 30 * time.Second)
 
 	relay := &SignalRelay{
 		pongTimeout: opts.PongTimeout,
@@ -119,7 +119,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 			return err
 		}
 
-		rr.Join(ctx, sessionId)
+		rr.Join(ctx, sessionId, 30 * time.Second)
 
 		return err
 	})
