@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/go-redis/redis/v8"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"testing"
 	"time"
@@ -55,15 +56,8 @@ func TestRedisRoomReceive(t *testing.T) {
 
 	message, err := room.Receive(context.Background())
 
-	if err != nil {
-		t.Errorf("%v\n", err)
-	}
-
-	actual := string(message)
-
-	if expected != actual {
-		t.Errorf("expected %s got %s\n", expected, actual)
-	}
+	assert.Nil(t, err)
+	assert.Equal(t, expected, string(message))
 }
 
 func TestRedisRoomReceiveCancellation(t *testing.T) {
@@ -109,9 +103,7 @@ func TestRedisRoomPublish(t *testing.T) {
 
 	err := room.Publish(context.Background(), []byte{})
 
-	if err != nil {
-		t.Errorf("expected %v, got %v\n", nil, err)
-	}
+	assert.Nil(t, err)
 }
 
 func TestRedisRoomPublishError(t *testing.T) {
@@ -124,9 +116,7 @@ func TestRedisRoomPublishError(t *testing.T) {
 
 	err := room.Publish(context.Background(), []byte{})
 
-	if err != ErrRoomGone {
-		t.Errorf("expected %v, got %v\n", ErrRoomGone, err)
-	}
+	assert.Equal(t, ErrRoomGone, err)
 }
 
 func TestRedisRoomPublishCancellation(t *testing.T) {
@@ -141,7 +131,5 @@ func TestRedisRoomPublishCancellation(t *testing.T) {
 
 	err := room.Publish(ctx, []byte{})
 
-	if err != context.Canceled {
-		t.Errorf("%v\n", err)
-	}
+	assert.Equal(t, context.Canceled, err)
 }
