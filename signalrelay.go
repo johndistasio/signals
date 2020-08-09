@@ -252,8 +252,6 @@ func (r *SignalRelay) WriteSignal(ctx context.Context) {
 
 	writeChan := make(chan []byte)
 
-
-	// FIXME this will leak
 	go func() {
 		for {
 			msg, err := r.room.Receive(ctx)

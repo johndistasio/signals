@@ -146,6 +146,9 @@ func (r *RedisRoom) Receive(ctx context.Context) ([]byte, error) {
 		return nil, ctx.Err()
 	case m, ok := <- r.ch:
 		if !ok {
+			// This check is very important. Since Go will receive on a closed channel forever, if we don't explicitly
+			// check if the channel is closed (which will happen when we leave) then any goroutine blocking on this
+			// method call will run forever.
 			return nil, ErrRoomGone
 		}
 
