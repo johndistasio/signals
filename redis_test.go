@@ -3,9 +3,44 @@ package main
 import (
 	"context"
 	"github.com/go-redis/redis/v8"
+	"github.com/stretchr/testify/mock"
 	"testing"
 	"time"
 )
+
+type MockRedis struct {
+	mock.Mock
+}
+
+func (m *MockRedis) Subscribe(ctx context.Context, channels ...string) *redis.PubSub {
+	args := m.Called(ctx, channels)
+	return args.Get(0).(*redis.PubSub)
+}
+
+func (m *MockRedis) Publish(ctx context.Context, channel string, message interface{}) *redis.IntCmd {
+	args := m.Called(ctx, channel, message)
+	return args.Get(0).(*redis.IntCmd)
+}
+
+func (m *MockRedis) Eval(ctx context.Context, script string, keys []string, argv ...interface{}) *redis.Cmd {
+	args := m.Called(ctx, script, keys, argv)
+	return args.Get(0).(*redis.Cmd)
+}
+
+func (m *MockRedis) EvalSha(ctx context.Context, sha1 string, keys []string, argv ...interface{}) *redis.Cmd {
+	args := m.Called(ctx, sha1, keys, argv)
+	return args.Get(0).(*redis.Cmd)
+}
+
+func (m *MockRedis) ScriptExists(ctx context.Context, hashes ...string) *redis.BoolSliceCmd {
+	args := m.Called(ctx, hashes)
+	return args.Get(0).(*redis.BoolSliceCmd)
+}
+
+func (m *MockRedis) ScriptLoad(ctx context.Context, script string) *redis.StringCmd {
+	args := m.Called(ctx, script)
+	return args.Get(0).(*redis.StringCmd)
+}
 
 type mockRedis struct {}
 
