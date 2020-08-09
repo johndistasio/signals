@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -42,6 +43,72 @@ func (m *MockRedis) ScriptExists(ctx context.Context, hashes ...string) *redis.B
 func (m *MockRedis) ScriptLoad(ctx context.Context, script string) *redis.StringCmd {
 	args := m.Called(ctx, script)
 	return args.Get(0).(*redis.StringCmd)
+}
+
+func TestRedisRoomJoin(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		panic(err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	room := &RedisRoom{name: "test", rdb: rdb}
+
+	id := "test"
+
+	timestamp, err := room.Enter(context.Background(), id, 1)
+	assert.Nil(t, err)
+	members, err := mr.ZMembers(room.Name())
+	assert.Greater(t, len(members), 0)
+	member := members[0]
+	assert.Equal(t, id, member)
+	assert.Nil(t, err)
+	score, err := mr.ZScore(room.Name(), member)
+	assert.Nil(t, err)
+	assert.Equal(t, timestamp, int64(score))
+
+	time.Sleep(1 * time.Second)
+
+	id = "test2"
+
+	timestamp, err = room.Enter(context.Background(), id, 1)
+	assert.Nil(t, err)
+	members, err = mr.ZMembers(room.Name())
+	assert.Greater(t, len(members), 0)
+	member = members[0]
+	assert.Equal(t, id, member)
+	assert.Nil(t, err)
+	score, err = mr.ZScore(room.Name(), member)
+	assert.Nil(t, err)
+	assert.Equal(t, timestamp, int64(score))
+}
+
+func TestRedisRoomLeave(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		panic(err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	room := &RedisRoom{name: "test", rdb: rdb}
+
+	id := "test"
+
+	_, err = room.Enter(context.Background(), id, 1)
+	assert.Nil(t, err)
+
+	err = room.Leave(context.Background(), id)
+
+	assert.Nil(t, err)
+
+	members, err := mr.ZMembers(room.Name())
+	assert.Equal(t, len(members), 0)
 }
 
 func TestRedisRoomReceive(t *testing.T) {

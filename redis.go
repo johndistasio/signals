@@ -31,7 +31,7 @@ type RedisRoom struct{
 }
 
 func (r *RedisRoom) Name() string {
-	return r.name
+	return r.key()
 }
 
 const roomKeyPrefix = "room:"
@@ -42,27 +42,7 @@ func (r *RedisRoom) key() string {
 	return roomKeyPrefix + r.name
 }
 
-func (r *RedisRoom) Join(ctx context.Context, id string, t time.Duration) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if err := r.acquire(ctx, id, t); err != nil {
-		return err
-	}
-
-	if r.joined {
-		return nil
-	}
-
-	r.pubsub = r.rdb.Subscribe(ctx, r.key())
-	r.ch = r.pubsub.Channel()
-
-	r.joined = true
-
-	return nil
-}
-
-// todo document arguments
+// TODO document arguments
 var acquireScript = redis.NewScript(`
 	redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
 
@@ -77,38 +57,41 @@ var acquireScript = redis.NewScript(`
 	end
 `)
 
+// TODO document arguments
+var releaseScript = redis.NewScript("return redis.call('ZREM', KEYS[1], ARGV[1])")
 
-// TODO how do we test this... make script a param?
+func (r *RedisRoom) Enter(ctx context.Context, id string, s int64) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-func (r *RedisRoom) acquire(ctx context.Context, id string, t time.Duration) error {
+	// Current timestamp
 	now := time.Now()
-	then := now.Add(t)
+	nowEpoch := now.Unix()
 
-	acq, err := acquireScript.Run(ctx, r.rdb, []string{r.key()}, then.Unix(), roomSize, now.Unix(), id).Result()
+	// Anything older than this is timed out
+	thenEpoch := nowEpoch - s
+
+	acq, err := acquireScript.Run(ctx, r.rdb, []string{r.key()}, thenEpoch, roomSize, nowEpoch, id).Result()
 
 	if err != nil {
-		return ErrRoomGone
+		return 0, ErrRoomGone
 	}
 
 	if acq != int64(1) {
-		return ErrRoomFull
+		return 0, ErrRoomFull
 	}
 
-	return nil
-}
-
-var releaseScript = redis.NewScript("return redis.call('ZREM', KEYS[1], ARGV[1])")
-
-func (r *RedisRoom) release(ctx context.Context, id string) error {
-	err := releaseScript.Run(ctx, r.rdb, []string{r.key()}, id).Err()
-
-	if err != nil {
-		return ErrRoomGone
+	if r.joined {
+		return nowEpoch, nil
 	}
 
-	return nil
-}
+	r.pubsub = r.rdb.Subscribe(ctx, r.key())
+	r.ch = r.pubsub.Channel()
 
+	r.joined = true
+
+	return nowEpoch, nil
+}
 
 func (r *RedisRoom) Leave(ctx context.Context, id string) error {
 	r.mu.Lock()
@@ -123,7 +106,7 @@ func (r *RedisRoom) Leave(ctx context.Context, id string) error {
 
 	// If either of these operations fail it means we can't talk to Redis, effectively booting us from the room when
 	// the timeout elapses. We should always try both so that any unused resources will be cleaned up.
-	err1 := r.release(ctx, id)
+	err1 := releaseScript.Run(ctx, r.rdb, []string{r.key()}, id).Err()
 	err2 := r.pubsub.Close()
 
 	if err1 != nil || err2 != nil {

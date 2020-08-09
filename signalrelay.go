@@ -46,7 +46,7 @@ type SignalRelay struct {
 	rdb Redis
 
 
-	closeOnce *sync.Once
+	once        *sync.Once
 	closeReader chan struct{}
 	closeWriter chan struct{}
 
@@ -59,14 +59,14 @@ type Signal struct {
 	Message string
 }
 
-func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts *SignalRelayOptions) (sessionId string, err error) {
+func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts *SignalRelayOptions) (string, error) {
 	id, err :=  ksuid.NewRandom()
 
 	if err != nil {
-		return sessionId, err
+		return "", err
 	}
 
-	sessionId = id.String()
+	sessionId := id.String()
 
 	if opts.PongTimeout < 1 {
 		opts.PongTimeout = DefaultPongTimeout
@@ -86,7 +86,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 
 	rr := &RedisRoom{name: room, rdb: rdb}
 
-	rr.Join(ctx, sessionId, 30 * time.Second)
+	rr.Enter(ctx, sessionId, 30)
 
 	relay := &SignalRelay{
 		pongTimeout: opts.PongTimeout,
@@ -99,7 +99,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 
 		room: rr,
 
-		closeOnce: new(sync.Once),
+		once:        new(sync.Once),
 		closeReader: make(chan struct{}),
 		closeWriter: make(chan struct{}),
 	}
@@ -119,7 +119,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 			return err
 		}
 
-		rr.Join(ctx, sessionId, 30 * time.Second)
+		rr.Enter(ctx, sessionId, 30)
 
 		return err
 	})
@@ -133,7 +133,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 }
 
 func (r *SignalRelay) Stop(ctx context.Context) {
-	r.closeOnce.Do(func() {
+	r.once.Do(func() {
 		r.room.Leave(ctx, r.id)
 		close(r.closeReader)
 		close(r.closeWriter)
@@ -175,6 +175,7 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 	readChan := make(chan []byte)
 
 	go func() {
+		// TODO the whole read/parse/react operation needs to happen here
 		for {
 			// This will block until it reads something or the socket closes, in which case it will return an error.
 			_, message, err := r.conn.ReadMessage()
