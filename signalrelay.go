@@ -136,7 +136,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 			return err
 		}
 
-		// TODO reset peering key expiration
+		rr.Join(ctx, sessionId)
 
 		return err
 	})
