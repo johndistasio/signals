@@ -9,13 +9,12 @@ import (
 
 type mockRedis struct {}
 
-func (r *mockRedis) Subscribe(ctx context.Context, channels...string) *redis.PubSub {
-	return nil
-}
-
-func (r *mockRedis) Publish(ctx context.Context, channel string, message interface{}) *redis.IntCmd {
-	return redis.NewIntResult(0, nil)
-}
+func (r *mockRedis) Subscribe(context.Context, ...string) *redis.PubSub {return nil}
+func (r *mockRedis) Publish(context.Context, string, interface{}) *redis.IntCmd {return redis.NewIntResult(0, nil)}
+func (r *mockRedis) Eval(context.Context, string, []string, ...interface{}) *redis.Cmd {return nil}
+func (r *mockRedis) EvalSha(context.Context, string, []string, ...interface{}) *redis.Cmd {return nil}
+func (r *mockRedis) ScriptExists(context.Context, ...string) *redis.BoolSliceCmd {return nil}
+func (r *mockRedis) ScriptLoad(context.Context, string) *redis.StringCmd {return nil}
 
 type slowRedis struct {}
 
@@ -23,11 +22,14 @@ func (r *slowRedis) Subscribe(ctx context.Context, channels...string) *redis.Pub
 	time.Sleep(10 * time.Second)
 	return nil
 }
-
 func (r *slowRedis) Publish(ctx context.Context, channel string, message interface{}) *redis.IntCmd {
 	time.Sleep(10 * time.Second)
 	return redis.NewIntResult(0, nil)
 }
+func (r *slowRedis) Eval(context.Context, string, []string, ...interface{}) *redis.Cmd {return nil}
+func (r *slowRedis) EvalSha(context.Context, string, []string, ...interface{}) *redis.Cmd {return nil}
+func (r *slowRedis) ScriptExists(context.Context, ...string) *redis.BoolSliceCmd {return nil}
+func (r *slowRedis) ScriptLoad(context.Context, string) *redis.StringCmd {return nil}
 
 func TestRedisRoomPublish(t *testing.T) {
 	room := &RedisRoom{name: "test", joined: true, rdb: &mockRedis{}}

@@ -101,7 +101,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 
 	rr := &RedisRoom{name: room, rdb: rdb}
 
-	rr.Join(ctx)
+	rr.Join(ctx, sessionId)
 
 	relay := &SignalRelay{
 		pongTimeout: opts.PongTimeout,
@@ -151,7 +151,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 
 func (r *SignalRelay) Stop(ctx context.Context) {
 	r.closeOnce.Do(func() {
-		r.room.Leave(ctx)
+		r.room.Leave(ctx, r.id)
 		close(r.closeReader)
 		close(r.closeWriter)
 		_ = r.conn.Close()
@@ -214,10 +214,8 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 	for {
 		select {
 		case <-r.closeReader:
-			log.Printf("%s: reader stopping on close chan\n", r.id)
 			return
 		case <-ctx.Done():
-			log.Printf("%s: reader stopping: %v\n", r.id, ctx.Err())
 			return
 		case message, ok := <-readChan:
 			if !ok {
@@ -273,10 +271,8 @@ func (r *SignalRelay) WriteSignal(ctx context.Context) {
 	for {
 		select {
 		case <-r.closeWriter:
-			log.Printf("%s: writer stopping on close chan\n", r.id)
 			return
 		case <-ctx.Done():
-			log.Printf("%s: writer stopping: %v\n", r.id, ctx.Err())
 			return
 		case <-ping.C:
 			if err := r.conn.WriteMessage(websocket.PingMessage, nil); err != nil {

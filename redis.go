@@ -4,12 +4,20 @@ import (
 	"context"
 	"github.com/go-redis/redis/v8"
 	"sync"
+	"time"
 )
 
 // Redis declares the methods we need from go-redis so that we can mock them for testing.
 type Redis interface {
 	Subscribe(ctx context.Context, channels ...string) *redis.PubSub
 	Publish(ctx context.Context, channel string, message interface{}) *redis.IntCmd
+
+
+	// Implements the 'scripter' interface from go-redis
+	Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
+	EvalSha(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd
+	ScriptExists(ctx context.Context, hashes ...string) *redis.BoolSliceCmd
+	ScriptLoad(ctx context.Context, script string) *redis.StringCmd
 }
 
 // RedisRoom is a Room implementation that uses Redis as both a lock manager and a message bus.
@@ -28,15 +36,19 @@ func (r *RedisRoom) Name() string {
 
 const roomKeyPrefix = "room:"
 
+const roomSize = 2
+
+const roomTimeout = 30
+
 func (r *RedisRoom) key() string {
 	return roomKeyPrefix + r.name
 }
 
-func (r *RedisRoom) Join(ctx context.Context) error {
+func (r *RedisRoom) Join(ctx context.Context, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if err := r.acquire(ctx); err != nil {
+	if err := r.acquire(ctx, id); err != nil {
 		return err
 	}
 
@@ -52,20 +64,56 @@ func (r *RedisRoom) Join(ctx context.Context) error {
 	return nil
 }
 
-// TODO implement me
-func (r *RedisRoom) acquire(ctx context.Context) error {
-	acquired := true
+// todo document arguments
+var acquireScript = redis.NewScript(`
+	redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
 
-	// TODO need to make distinction between room full and room gone
+	if redis.call('ZCARD', KEYS[1]) < tonumber(ARGV[2]) then
+		redis.call('ZADD', KEYS[1], ARGV[3], ARGV[4])
+		return 1
+    elseif redis.call('ZSCORE', KEYS[1], ARGV[4]) then
+		redis.call('ZADD', KEYS[1], ARGV[3], ARGV[4])
+		return 1
+	else
+		return 0
+	end
+`)
 
-	if !acquired {
+
+// TODO how do we test this... make script a param?
+
+func (r *RedisRoom) acquire(ctx context.Context, id string) error {
+	// TODO nano
+	now := time.Now().Unix()
+	old := now - roomTimeout
+
+	acq, err := acquireScript.Run(ctx, r.rdb, []string{r.key()}, old, roomSize, now, id).Result()
+
+	if err != nil {
+		return ErrRoomGone
+	}
+
+	if acq != int64(1) {
 		return ErrRoomFull
 	}
 
 	return nil
 }
 
-func (r *RedisRoom) Leave(ctx context.Context) error {
+var releaseScript = redis.NewScript("return redis.call('ZREM', KEYS[1], ARGV[1])")
+
+func (r *RedisRoom) release(ctx context.Context, id string) error {
+	err := releaseScript.Run(ctx, r.rdb, []string{r.key()}, id).Err()
+
+	if err != nil {
+		return ErrRoomGone
+	}
+
+	return nil
+}
+
+
+func (r *RedisRoom) Leave(ctx context.Context, id string) error {
 	r.mu.Lock()
 	defer func() {
 		r.joined = false
@@ -76,20 +124,15 @@ func (r *RedisRoom) Leave(ctx context.Context) error {
 		return nil
 	}
 
-	// If either of these operations fail it means we can't talk to Redis, effectively booting us from the room.
-	// We should always try both so that any unused resources will be cleaned up.
-	err1 := r.release(ctx)
+	// If either of these operations fail it means we can't talk to Redis, effectively booting us from the room when
+	// the timeout elapses. We should always try both so that any unused resources will be cleaned up.
+	err1 := r.release(ctx, id)
 	err2 := r.pubsub.Close()
 
 	if err1 != nil || err2 != nil {
 		return ErrRoomGone
 	}
 
-	return nil
-}
-
-// TODO implement me
-func (r *RedisRoom) release(ctx context.Context) error {
 	return nil
 }
 
