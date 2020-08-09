@@ -50,23 +50,8 @@ type SignalRelay struct {
 	closeReader chan struct{}
 	closeWriter chan struct{}
 
-	seat seat
-
 
 	room Room
-}
-
-type seat struct {
-	room string
-	id string
-}
-
-func (s *seat) key() string {
-	return "seat:" + s.room + ":" + s.id
-}
-
-func (s *seat) channelKey() string {
-	return "channel:" + s.room
 }
 
 type Signal struct {
@@ -117,8 +102,6 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 		closeOnce: new(sync.Once),
 		closeReader: make(chan struct{}),
 		closeWriter: make(chan struct{}),
-
-		seat: seat{room, "0"},
 	}
 
 	conn.SetCloseHandler(func (code int, text string) error {
