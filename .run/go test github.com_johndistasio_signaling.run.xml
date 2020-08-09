@@ -1,0 +1,12 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="go test github.com/johndistasio/signaling" type="GoTestRunConfiguration" factoryName="Go Test" nameIsGenerated="true">
+    <module name="signaling" />
+    <working_directory value="$PROJECT_DIR$" />
+    <framework value="gotest" />
+    <kind value="PACKAGE" />
+    <package value="github.com/johndistasio/signaling" />
+    <directory value="$PROJECT_DIR$/" />
+    <filePath value="$PROJECT_DIR$/" />
+    <method v="2" />
+  </configuration>
+</component>
