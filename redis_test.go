@@ -43,22 +43,6 @@ func (m *MockRedis) ScriptLoad(ctx context.Context, script string) *redis.String
 	return args.Get(0).(*redis.StringCmd)
 }
 
-
-type slowRedis struct {}
-
-func (r *slowRedis) Subscribe(ctx context.Context, channels...string) *redis.PubSub {
-	time.Sleep(10 * time.Second)
-	return nil
-}
-func (r *slowRedis) Publish(ctx context.Context, channel string, message interface{}) *redis.IntCmd {
-	time.Sleep(10 * time.Second)
-	return redis.NewIntResult(0, nil)
-}
-func (r *slowRedis) Eval(context.Context, string, []string, ...interface{}) *redis.Cmd {return nil}
-func (r *slowRedis) EvalSha(context.Context, string, []string, ...interface{}) *redis.Cmd {return nil}
-func (r *slowRedis) ScriptExists(context.Context, ...string) *redis.BoolSliceCmd {return nil}
-func (r *slowRedis) ScriptLoad(context.Context, string) *redis.StringCmd {return nil}
-
 func TestRedisRoomReceive(t *testing.T) {
 	ch := make(chan *redis.Message, 1)
 	defer close(ch)
@@ -83,15 +67,35 @@ func TestRedisRoomReceive(t *testing.T) {
 }
 
 func TestRedisRoomReceiveCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	// Set a timeout for overall test invocation.
+	timeout, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 
-	room := &RedisRoom{name: "test", joined: true, rdb: &slowRedis{}}
+	done := make(chan interface{})
 
-	_, err := room.Receive(ctx)
+	go func() {
+		defer close(done)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
 
-	if err != context.Canceled {
-		t.Errorf("%v\n", err)
+		// Create a channel that will block receives forever.
+		ch := make(chan *redis.Message)
+		defer close(ch)
+
+		room := &RedisRoom{name: "test", joined: true, ch: ch, rdb: new(MockRedis)}
+
+		_, err := room.Receive(ctx)
+
+		if err != context.Canceled {
+			t.Errorf("%v\n", err)
+		}
+	}()
+
+	select {
+	case <-timeout.Done():
+		t.Errorf("test invocation timed out")
+	case <-done:
+		return
 	}
 }
 
@@ -129,7 +133,11 @@ func TestRedisRoomPublishCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	room := &RedisRoom{name: "test", joined: true, rdb: &slowRedis{}}
+	cmd := redis.NewIntResult(1, nil)
+	rdb := new(MockRedis)
+	rdb.On("Publish", mock.Anything, mock.Anything, mock.Anything).WaitUntil(time.After(time.Second)).Return(cmd)
+
+	room := &RedisRoom{name: "test", joined: true, rdb: rdb}
 
 	err := room.Publish(ctx, []byte{})
 
