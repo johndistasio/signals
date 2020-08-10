@@ -255,6 +255,7 @@ func (r *SignalRelay) WriteSignal(ctx context.Context) {
 
 	go func() {
 		for {
+
 			msg, err := r.room.Receive(ctx)
 
 			if err != nil {
@@ -263,7 +264,9 @@ func (r *SignalRelay) WriteSignal(ctx context.Context) {
 				return
 			}
 
+
 			writeChan <- msg
+
 		}
 	}()
 

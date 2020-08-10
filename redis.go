@@ -22,14 +22,24 @@ type Redis interface {
 	ScriptLoad(ctx context.Context, script string) *redis.StringCmd
 }
 
+// PubSub declares the methods we need from go-redis's PubSub type so we can mock them for testing.
+type PubSub interface {
+	Close() error
+	ReceiveMessage(ctx context.Context) (*redis.Message, error)
+	Subscribe(ctx context.Context, channels ...string) error
+}
+
 // RedisRoom is a Room implementation that uses Redis as both a lock manager and a message bus.
 type RedisRoom struct{
 	name string
-	rdb  Redis
 	mu sync.Mutex
+
+	rdb  Redis
+	pubsub PubSub
+
+	// Flag indicating whether or not we think we're connected to Redis; used to translate errors from the underlying
+	// Redis client to "failure because we closed the connection" or "failure because redis is unreachable".
 	joined bool
-	pubsub *redis.PubSub
-	ch <-chan *redis.Message
 }
 
 func (r *RedisRoom) Name() string {
@@ -93,7 +103,6 @@ func (r *RedisRoom) Enter(ctx context.Context, id string, s int64) (int64, error
 	}
 
 	r.pubsub = r.rdb.Subscribe(ctx, r.key())
-	r.ch = r.pubsub.Channel()
 
 	r.joined = true
 
@@ -111,7 +120,7 @@ func (r *RedisRoom) Leave(ctx context.Context, id string) error {
 	}()
 
 	if !r.joined {
-		return nil
+		return ErrRoomLeft
 	}
 
 	// If either of these operations fail it means we can't talk to Redis, effectively booting us from the room when
@@ -131,24 +140,37 @@ func (r *RedisRoom) Receive(ctx context.Context) ([]byte, error) {
 	defer span.Finish()
 
 	if !r.joined {
-		return nil, nil
+		return nil, ErrRoomLeft
 	}
+
+	errChan := make(chan error, 1)
+	msgChan := make(chan *redis.Message, 1)
+
+	go func() {
+		defer close(errChan)
+		defer close(msgChan)
+
+		// returns io.EOF when redis disappears
+		m, err := r.pubsub.ReceiveMessage(ctx)
+
+		if err != nil {
+			errChan <- err
+			return
+		}
+
+		msgChan <- m
+	}()
 
 	select {
 	case <- ctx.Done():
 		return nil, ctx.Err()
-	case m, ok := <- r.ch:
-		if !ok {
-			// This check is very important. Since Go will receive on a closed channel forever, if we don't explicitly
-			// check if the channel is closed (which will happen when we leave) then any goroutine blocking on this
-			// method call will run forever.
-			err := ErrRoomGone
-
-			// TODO we need to be able to tell the difference between "we closed the connection to redis" vs "there was an error reading from redis"
-			//ext.LogError(span, err)
-			return nil, err
+	case err := <- errChan:
+		if !r.joined {
+			return nil, ErrRoomLeft
 		}
-
+		ext.LogError(span, err)
+		return nil, ErrRoomGone
+	case m :=<- msgChan:
 		return []byte(m.Payload), nil
 	}
 }
@@ -157,14 +179,15 @@ func (r *RedisRoom) Publish(ctx context.Context, message []byte) error {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "RedisRoom.Publish")
 	defer span.Finish()
 	if !r.joined {
-		return nil
+		return ErrRoomLeft
 	}
 
 	ch := make(chan error, 1)
 
 	go func() {
+		defer close(ch)
+		// returns io.EOF when redis disappears
 		ch <- r.rdb.Publish(ctx, r.key(), message).Err()
-		close(ch)
 	}()
 
 	select {
@@ -172,6 +195,9 @@ func (r *RedisRoom) Publish(ctx context.Context, message []byte) error {
 		return ctx.Err()
 	case err := <-ch:
 		if err != nil {
+			if !r.joined {
+				return ErrRoomLeft
+			}
 			ext.LogError(span, err)
 			return ErrRoomGone
 		}

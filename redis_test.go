@@ -45,6 +45,25 @@ func (m *MockRedis) ScriptLoad(ctx context.Context, script string) *redis.String
 	return args.Get(0).(*redis.StringCmd)
 }
 
+type MockPubSub struct {
+	mock.Mock
+}
+
+func (m *MockPubSub) Close() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockPubSub) ReceiveMessage(ctx context.Context) (*redis.Message, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(*redis.Message), args.Error(1)
+}
+
+func (m *MockPubSub) Subscribe(ctx context.Context, channels ...string) error {
+	args := m.Called(ctx, channels)
+	return args.Error(0)
+}
+
 func TestRedisRoomJoin(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -112,6 +131,19 @@ func TestRedisRoomLeave(t *testing.T) {
 }
 
 func TestRedisRoomReceive(t *testing.T) {
+	expected := "whoa"
+
+	pubsub := new(MockPubSub)
+	pubsub.On("ReceiveMessage", mock.Anything).Return(&redis.Message{Payload: expected}, nil)
+
+	room := &RedisRoom{name: "test", joined: true, pubsub: pubsub}
+
+	m, err := room.Receive(context.Background())
+
+	assert.Equal(t, []byte(expected), m)
+	assert.Nil(t, err)
+
+	/*
 	ch := make(chan *redis.Message, 1)
 	defer close(ch)
 
@@ -125,9 +157,31 @@ func TestRedisRoomReceive(t *testing.T) {
 
 	assert.Nil(t, err)
 	assert.Equal(t, expected, string(message))
+
+	 */
 }
 
 func TestRedisRoomReceiveCancellation(t *testing.T) {
+
+	pubsub := new(MockPubSub)
+	pubsub.On("ReceiveMessage", mock.Anything).Run(func (args mock.Arguments){
+		// Not so long to hang the test forever, long enough to notice.
+		time.Sleep(30 * time.Second)
+
+	}).Return([]byte("whoa"), nil)
+
+	room := &RedisRoom{name: "test", joined: true, pubsub: pubsub}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	m, err := room.Receive(ctx)
+
+	assert.Nil(t, m)
+	assert.Equal(t, err, context.Canceled)
+
+	/*
+
 	// Set a timeout for overall test invocation.
 	timeout, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -158,6 +212,8 @@ func TestRedisRoomReceiveCancellation(t *testing.T) {
 	case <-done:
 		return
 	}
+
+	 */
 }
 
 func TestRedisRoomPublish(t *testing.T) {

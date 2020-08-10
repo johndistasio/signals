@@ -66,7 +66,7 @@ func main() {
 			Param: 1,
 		},
 		Reporter:    &jaegerConfig.ReporterConfig{
-			LogSpans: true,
+			LogSpans: false,
 		},
 	}
 
@@ -83,7 +83,7 @@ func main() {
 	)
 
 	if err != nil {
-		log.Fatalf("error: %v\n", err)
+		log.Fatalf("fatal: %v\n", err)
 	}
 
 	// Set the singleton opentracing.Tracer with the Jaeger tracer.
@@ -95,6 +95,6 @@ func main() {
 	log.Println("Starting websocket server on :9000")
 	err = http.ListenAndServe(":9000", nil)
 	if err != nil {
-		log.Fatalf("error: %v\n", err)
+		log.Fatalf("fatal: %v\n", err)
 	}
 }
