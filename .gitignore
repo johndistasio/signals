@@ -1,4 +1,6 @@
 signaling
 *.rdb
 
+*.test
+
 .idea/

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/gorilla/websocket"
+	"github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/ext"
 	"github.com/segmentio/ksuid"
 	"log"
 	"strings"
@@ -60,13 +62,19 @@ type Signal struct {
 }
 
 func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts *SignalRelayOptions) (string, error) {
+	span, ctx := opentracing.StartSpanFromContext(ctx, "StartSignalRelay")
+	defer span.Finish()
+
 	id, err :=  ksuid.NewRandom()
 
 	if err != nil {
+		ext.LogError(span, err)
 		return "", err
 	}
 
 	sessionId := id.String()
+
+	span.SetTag("signaling.session.id", sessionId)
 
 	if opts.PongTimeout < 1 {
 		opts.PongTimeout = DefaultPongTimeout
@@ -105,6 +113,11 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 	}
 
 	conn.SetCloseHandler(func (code int, text string) error {
+		//ctx := context.Background()
+		span, ctx := opentracing.StartSpanFromContext(ctx, "websocket.CloseHandler")
+		defer span.Finish()
+		span.SetTag("signaling.session.id", sessionId)
+		//ctx = opentracing.ContextWithSpan(ctx, span)
 		relay.Stop(ctx)
 		return nil
 	})
@@ -133,10 +146,14 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 }
 
 func (r *SignalRelay) Stop(ctx context.Context) {
+	span, ctx := opentracing.StartSpanFromContext(ctx, "SignalRelay.Stop")
+	defer span.Finish()
+	span.SetTag("signaling.session.id", r.id)
+
 	r.once.Do(func() {
-		r.room.Leave(ctx, r.id)
 		close(r.closeReader)
 		close(r.closeWriter)
+		_ = r.room.Leave(ctx, r.id)
 		_ = r.conn.Close()
 	})
 }

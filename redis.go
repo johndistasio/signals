@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"github.com/go-redis/redis/v8"
+	"github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/ext"
 	"sync"
 	"time"
 )
@@ -61,6 +63,8 @@ var acquireScript = redis.NewScript(`
 var releaseScript = redis.NewScript("return redis.call('ZREM', KEYS[1], ARGV[1])")
 
 func (r *RedisRoom) Enter(ctx context.Context, id string, s int64) (int64, error) {
+	span, ctx := opentracing.StartSpanFromContext(ctx, "RedisRoom.Enter")
+	defer span.Finish()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -74,11 +78,14 @@ func (r *RedisRoom) Enter(ctx context.Context, id string, s int64) (int64, error
 	acq, err := acquireScript.Run(ctx, r.rdb, []string{r.key()}, thenEpoch, roomSize, nowEpoch, id).Result()
 
 	if err != nil {
+		ext.LogError(span, err)
 		return 0, ErrRoomGone
 	}
 
 	if acq != int64(1) {
-		return 0, ErrRoomFull
+		err = ErrRoomFull
+		ext.LogError(span, err)
+		return 0, err
 	}
 
 	if r.joined {
@@ -94,6 +101,9 @@ func (r *RedisRoom) Enter(ctx context.Context, id string, s int64) (int64, error
 }
 
 func (r *RedisRoom) Leave(ctx context.Context, id string) error {
+	span, ctx := opentracing.StartSpanFromContext(ctx, "RedisRoom.Leave")
+	defer span.Finish()
+
 	r.mu.Lock()
 	defer func() {
 		r.joined = false
@@ -117,6 +127,9 @@ func (r *RedisRoom) Leave(ctx context.Context, id string) error {
 }
 
 func (r *RedisRoom) Receive(ctx context.Context) ([]byte, error) {
+	span, ctx := opentracing.StartSpanFromContext(ctx, "RedisRoom.Receive")
+	defer span.Finish()
+
 	if !r.joined {
 		return nil, nil
 	}
@@ -129,7 +142,11 @@ func (r *RedisRoom) Receive(ctx context.Context) ([]byte, error) {
 			// This check is very important. Since Go will receive on a closed channel forever, if we don't explicitly
 			// check if the channel is closed (which will happen when we leave) then any goroutine blocking on this
 			// method call will run forever.
-			return nil, ErrRoomGone
+			err := ErrRoomGone
+
+			// TODO we need to be able to tell the difference between "we closed the connection to redis" vs "there was an error reading from redis"
+			//ext.LogError(span, err)
+			return nil, err
 		}
 
 		return []byte(m.Payload), nil
@@ -137,6 +154,8 @@ func (r *RedisRoom) Receive(ctx context.Context) ([]byte, error) {
 }
 
 func (r *RedisRoom) Publish(ctx context.Context, message []byte) error {
+	span, ctx := opentracing.StartSpanFromContext(ctx, "RedisRoom.Publish")
+	defer span.Finish()
 	if !r.joined {
 		return nil
 	}
@@ -153,6 +172,7 @@ func (r *RedisRoom) Publish(ctx context.Context, message []byte) error {
 		return ctx.Err()
 	case err := <-ch:
 		if err != nil {
+			ext.LogError(span, err)
 			return ErrRoomGone
 		}
 		return nil
