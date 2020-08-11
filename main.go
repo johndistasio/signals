@@ -35,14 +35,11 @@ func ws(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 
 	if err != nil {
-		// The upgrader has already written the error out to the client so we don't need to.
 		ext.LogError(span, err)
+		_ = conn.Close()
 		return
 	}
 
-	log.Printf("new websocket connection from %s\n", r.RemoteAddr)
-
-	// TODO populate a trace with the returned session ID or error
 
 	ctx := opentracing.ContextWithSpan(context.Background(), span)
 	sessionId, err := StartSignalRelay(ctx, rdb, conn, &SignalRelayOptions{})
@@ -53,7 +50,9 @@ func ws(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	span.SetTag("signaling.session.id", sessionId)
+	log.Printf("new signaling session for %s: %s\n", r.RemoteAddr, sessionId)
+
+	span.SetTag("session.id", sessionId)
 }
 
 func main() {

@@ -74,7 +74,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 
 	sessionId := id.String()
 
-	span.SetTag("signaling.session.id", sessionId)
+	span.SetTag("session.id", sessionId)
 
 	if opts.PongTimeout < 1 {
 		opts.PongTimeout = DefaultPongTimeout
@@ -113,31 +113,39 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 	}
 
 	conn.SetCloseHandler(func (code int, text string) error {
-		//ctx := context.Background()
-		span, ctx := opentracing.StartSpanFromContext(ctx, "websocket.CloseHandler")
+		span, ctx := opentracing.StartSpanFromContext(context.Background(), "websocket.CloseHandler")
 		defer span.Finish()
-		span.SetTag("signaling.session.id", sessionId)
-		//ctx = opentracing.ContextWithSpan(ctx, span)
+		span.SetTag("session.id", sessionId)
 		relay.Stop(ctx)
 		return nil
 	})
 
 	conn.SetPongHandler(func(appData string) error {
-		log.Println("pong handler firing")
+		span, ctx := opentracing.StartSpanFromContext(context.Background(), "websocket.PongHandler")
+		defer span.Finish()
+		span.SetTag("session.id", sessionId)
 
 		// If this errors then the underlying connection is in a bad state, which is unrecoverable.
 		err := conn.SetReadDeadline(time.Now().Add(relay.pongTimeout))
 
 		if err != nil {
+			ext.LogError(span, err)
 			return err
 		}
 
-		rr.Enter(ctx, sessionId, 30)
+		_, err = rr.Enter(ctx, sessionId, 30)
 
-		return err
+		if err != nil {
+			ext.LogError(span, err)
+			return err
+		}
+
+		return nil
 	})
 
 	conn.SetReadLimit(relay.readLimit)
+
+	ctx = context.Background()
 
 	go relay.ReadSignal(ctx)
 	go relay.WriteSignal(ctx)
@@ -148,7 +156,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 func (r *SignalRelay) Stop(ctx context.Context) {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "SignalRelay.Stop")
 	defer span.Finish()
-	span.SetTag("signaling.session.id", r.id)
+	span.SetTag("session.id", r.id)
 
 	r.once.Do(func() {
 		close(r.closeReader)
@@ -187,6 +195,9 @@ func ch(f func() []byte) <-chan []byte {
 }
 
 func (r *SignalRelay) ReadSignal(ctx context.Context) {
+	span, ctx := opentracing.StartSpanFromContext(ctx, "SignalRelay.ReadSignal")
+	span.SetTag("session.id", r.id)
+	defer span.Finish()
 	defer r.Stop(ctx)
 
 	readChan := make(chan []byte)
@@ -194,6 +205,11 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 	go func() {
 		// TODO the whole read/parse/react operation needs to happen here
 		for {
+			span, ctx = opentracing.StartSpanFromContext(ctx, "SignalRelay.ReadSignal.Loop")
+			span.SetTag("session.id", r.id)
+
+			// TODO we shouldn't trace this blocking operation
+
 			// This will block until it reads something or the socket closes, in which case it will return an error.
 			_, message, err := r.conn.ReadMessage()
 
@@ -204,11 +220,13 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 					log.Printf("%s: expected socket closure on Readmessage: %v\n", r.id, err)
 				}
 
+				span.Finish()
 				close(readChan)
 				return
 			}
 
 			readChan <- message
+			span.Finish()
 		}
 	}()
 
@@ -244,6 +262,10 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 }
 
 func (r *SignalRelay) WriteSignal(ctx context.Context) {
+	span, ctx := opentracing.StartSpanFromContext(ctx, "SignalRelay.WriteSignal")
+	span.SetTag("session.id", r.id)
+	defer span.Finish()
+
 	ping := time.NewTicker(r.pingInterval)
 
 	defer func() {
