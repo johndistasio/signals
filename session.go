@@ -29,9 +29,9 @@ func GenerateSessionId(ctx context.Context) (string, error) {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "GenerateSessionId")
 	defer span.Finish()
 
-	id, err :=  ksuid.NewRandom()
+	id, err := ksuid.NewRandom()
 
-	if err !=  nil {
+	if err != nil {
 		ext.LogError(span, err)
 		return "", ErrSessionId
 	}

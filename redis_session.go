@@ -10,8 +10,8 @@ import (
 // RedisSession is a Session stored in Redis. Sessions are stored as keys and use Redis' TTL functionality to age out.
 // Key values are the Unix timestamp of session creation.
 type RedisSession struct {
-	r Redis
-	d time.Duration
+	r  Redis
+	d  time.Duration
 	id string
 }
 
@@ -31,7 +31,7 @@ func (s *RedisSession) Create(ctx context.Context) error {
 
 	val := time.Now().Unix()
 
-	set, err := s.r.SetNX(ctx, sessionKeyPrefix + s.id, val, s.d).Result()
+	set, err := s.r.SetNX(ctx, sessionKeyPrefix+s.id, val, s.d).Result()
 
 	if err != nil {
 		ext.LogError(span, err)
@@ -49,7 +49,7 @@ func (s *RedisSession) Renew(ctx context.Context) error {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "RedisSession.Renew")
 	defer span.Finish()
 
-	set, err := s.r.Expire(ctx, sessionKeyPrefix + s.id, s.d).Result()
+	set, err := s.r.Expire(ctx, sessionKeyPrefix+s.id, s.d).Result()
 
 	if err != nil {
 		ext.LogError(span, err)
@@ -67,7 +67,7 @@ func (s *RedisSession) Expire(ctx context.Context) error {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "RedisSession.Expire")
 	defer span.Finish()
 
-	del, err := s.r.Del(ctx, sessionKeyPrefix + s.id).Result()
+	del, err := s.r.Del(ctx, sessionKeyPrefix+s.id).Result()
 
 	if err != nil {
 		ext.LogError(span, err)

@@ -30,7 +30,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 	tracer := opentracing.GlobalTracer()
 	sctx, _ := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(r.Header))
 	span := tracer.StartSpan("/ws", ext.RPCServerOption(sctx))
-	defer span .Finish()
+	defer span.Finish()
 
 	ctx := opentracing.ContextWithSpan(context.Background(), span)
 
@@ -107,11 +107,11 @@ func main() {
 	// and enable LogSpan to log every span via configured Logger.
 	cfg := jaegerConfig.Configuration{
 		ServiceName: "signaling",
-		Sampler:     &jaegerConfig.SamplerConfig{
+		Sampler: &jaegerConfig.SamplerConfig{
 			Type:  jaeger.SamplerTypeConst,
 			Param: 1,
 		},
-		Reporter:    &jaegerConfig.ReporterConfig{
+		Reporter: &jaegerConfig.ReporterConfig{
 			LogSpans: false,
 		},
 	}
@@ -135,7 +135,6 @@ func main() {
 	// Set the singleton opentracing.Tracer with the Jaeger tracer.
 	opentracing.SetGlobalTracer(tracer)
 	defer closer.Close()
-
 
 	http.HandleFunc("/ws", ws)
 	log.Println("Starting websocket server on :9000")

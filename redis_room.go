@@ -10,11 +10,10 @@ import (
 )
 
 // RedisRoom is a Room implementation that uses Redis as both a lock manager and a message bus.
-type RedisRoom struct{
-	name string
-	mu sync.Mutex
-
-	rdb  Redis
+type RedisRoom struct {
+	name   string
+	mu     sync.Mutex
+	rdb    Redis
 	pubsub PubSub
 
 	// Flag indicating whether or not we think we're connected to Redis; used to translate errors from the underlying
@@ -142,15 +141,15 @@ func (r *RedisRoom) Receive(ctx context.Context) ([]byte, error) {
 	}()
 
 	select {
-	case <- ctx.Done():
+	case <-ctx.Done():
 		return nil, ctx.Err()
-	case err := <- errChan:
+	case err := <-errChan:
 		if !r.joined {
 			return nil, ErrRoomLeft
 		}
 		ext.LogError(span, err)
 		return nil, ErrRoomGone
-	case m :=<- msgChan:
+	case m := <-msgChan:
 		return []byte(m.Payload), nil
 	}
 }

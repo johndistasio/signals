@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-
 func TestRedisRoomJoin(t *testing.T) {
 	mr, err := miniredis.Run()
 
@@ -103,7 +102,7 @@ func TestRedisRoomReceive(t *testing.T) {
 
 func TestRedisRoomReceiveCancellation(t *testing.T) {
 	pubsub := new(mocks.PubSub)
-	pubsub.On("ReceiveMessage", mock.Anything).Run(func (args mock.Arguments){
+	pubsub.On("ReceiveMessage", mock.Anything).Run(func(args mock.Arguments) {
 		// Not so long to hang the test forever, long enough to notice.
 		time.Sleep(30 * time.Second)
 
