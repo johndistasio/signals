@@ -6,7 +6,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
-	"github.com/segmentio/ksuid"
 	"log"
 	"strings"
 	"sync"
@@ -41,11 +40,11 @@ type SignalRelay struct {
 	writeTimeout time.Duration
 	readLimit int64
 
-	id string
-
 	conn *websocket.Conn
 
 	rdb Redis
+
+	s Session
 
 
 	once        *sync.Once
@@ -61,20 +60,10 @@ type Signal struct {
 	Message string
 }
 
-func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts *SignalRelayOptions) (string, error) {
+func StartSignalRelay(ctx context.Context, session Session, rdb Redis, conn *websocket.Conn, opts *SignalRelayOptions) error {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "StartSignalRelay")
 	defer span.Finish()
-
-	id, err :=  ksuid.NewRandom()
-
-	if err != nil {
-		ext.LogError(span, err)
-		return "", err
-	}
-
-	sessionId := id.String()
-
-	span.SetTag("session.id", sessionId)
+	span.SetTag("session.id", session.ID())
 
 	if opts.PongTimeout < 1 {
 		opts.PongTimeout = DefaultPongTimeout
@@ -94,14 +83,14 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 
 	rr := &RedisRoom{name: room, rdb: rdb}
 
-	rr.Enter(ctx, sessionId, 30)
+	rr.Enter(ctx, session.ID(), 30)
 
 	relay := &SignalRelay{
 		pongTimeout: opts.PongTimeout,
 		writeTimeout: opts.WriteTimeout,
 		pingInterval: opts.PingInterval,
 		readLimit: opts.ReadLimit,
-		id: sessionId,
+		s: session,
 		rdb: rdb,
 		conn: conn,
 
@@ -115,7 +104,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 	conn.SetCloseHandler(func (code int, text string) error {
 		span, ctx := opentracing.StartSpanFromContext(context.Background(), "websocket.CloseHandler")
 		defer span.Finish()
-		span.SetTag("session.id", sessionId)
+		span.SetTag("session.id", session.ID())
 		relay.Stop(ctx)
 		return nil
 	})
@@ -123,7 +112,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 	conn.SetPongHandler(func(appData string) error {
 		span, ctx := opentracing.StartSpanFromContext(context.Background(), "websocket.PongHandler")
 		defer span.Finish()
-		span.SetTag("session.id", sessionId)
+		span.SetTag("session.id", session.ID())
 
 		// If this errors then the underlying connection is in a bad state, which is unrecoverable.
 		err := conn.SetReadDeadline(time.Now().Add(relay.pongTimeout))
@@ -133,7 +122,7 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 			return err
 		}
 
-		_, err = rr.Enter(ctx, sessionId, 30)
+		_, err = rr.Enter(ctx, session.ID(), 30)
 
 		if err != nil {
 			ext.LogError(span, err)
@@ -150,18 +139,18 @@ func StartSignalRelay(ctx context.Context, rdb Redis, conn *websocket.Conn, opts
 	go relay.ReadSignal(ctx)
 	go relay.WriteSignal(ctx)
 
-	return sessionId, err
+	return nil
 }
 
 func (r *SignalRelay) Stop(ctx context.Context) {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "SignalRelay.Stop")
 	defer span.Finish()
-	span.SetTag("session.id", r.id)
+	span.SetTag("session.id", r.s.ID())
 
 	r.once.Do(func() {
 		close(r.closeReader)
 		close(r.closeWriter)
-		_ = r.room.Leave(ctx, r.id)
+		_ = r.room.Leave(ctx, r.s.ID())
 		_ = r.conn.Close()
 	})
 }
@@ -196,7 +185,7 @@ func ch(f func() []byte) <-chan []byte {
 
 func (r *SignalRelay) ReadSignal(ctx context.Context) {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "SignalRelay.ReadSignal")
-	span.SetTag("session.id", r.id)
+	span.SetTag("session.id", r.s.ID())
 	defer span.Finish()
 	defer r.Stop(ctx)
 
@@ -206,7 +195,7 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 		// TODO the whole read/parse/react operation needs to happen here
 		for {
 			span, ctx = opentracing.StartSpanFromContext(ctx, "SignalRelay.ReadSignal.Loop")
-			span.SetTag("session.id", r.id)
+			span.SetTag("session.id", r.s.ID())
 
 			// TODO we shouldn't trace this blocking operation
 
@@ -215,9 +204,9 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 
 			if err != nil {
 				if !isSocketCloseError(err) {
-					log.Printf("%s: reader error on ReadMessage: %v\n", r.id, err)
+					log.Printf("%s: reader error on ReadMessage: %v\n", r.s.ID(), err)
 				} else {
-					log.Printf("%s: expected socket closure on Readmessage: %v\n", r.id, err)
+					log.Printf("%s: expected socket closure on Readmessage: %v\n", r.s.ID(), err)
 				}
 
 				span.Finish()
@@ -238,21 +227,21 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 			return
 		case message, ok := <-readChan:
 			if !ok {
-				log.Printf("%s: reader stopping on readChan: %v\n", r.id, ok)
+				log.Printf("%s: reader stopping on readChan: %v\n", r.s.ID(), ok)
 				return
 			}
 
-			msg, err := json.Marshal(Signal{r.id, string(message)})
+			msg, err := json.Marshal(Signal{r.s.ID(), string(message)})
 
 			if err != nil {
-				log.Printf("%s: error on serializing message: %v\n", r.id, err)
+				log.Printf("%s: error on serializing message: %v\n", r.s.ID(), err)
 				return
 			}
 
 			err = r.room.Publish(ctx, msg)
 
 			if err != nil {
-				log.Printf("%s: error on publish to room: %v\n", r.id, err)
+				log.Printf("%s: error on publish to room: %v\n", r.s.ID(), err)
 				return
 			}
 		default:
@@ -263,7 +252,7 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 
 func (r *SignalRelay) WriteSignal(ctx context.Context) {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "SignalRelay.WriteSignal")
-	span.SetTag("session.id", r.id)
+	span.SetTag("session.id", r.s.ID())
 	defer span.Finish()
 
 	ping := time.NewTicker(r.pingInterval)
@@ -281,7 +270,7 @@ func (r *SignalRelay) WriteSignal(ctx context.Context) {
 			msg, err := r.room.Receive(ctx)
 
 			if err != nil {
-				log.Printf("%s: writer stopping on WriteMessage (room): %v\n", r.id, err)
+				log.Printf("%s: writer stopping on WriteMessage (room): %v\n", r.s.ID(), err)
 				close(writeChan)
 				return
 			}
@@ -301,14 +290,14 @@ func (r *SignalRelay) WriteSignal(ctx context.Context) {
 		case <-ping.C:
 			if err := r.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
-					log.Printf("%s: writer error on WriteMessage (pinger): %v\n", r.id, err)
+					log.Printf("%s: writer error on WriteMessage (pinger): %v\n", r.s.ID(), err)
 				}
 
 				return
 			}
 		case message, ok := <-writeChan:
 			if !ok {
-				log.Printf("%s: writer stopping on writeCHan : %v\n", r.id, ok)
+				log.Printf("%s: writer stopping on writeChan : %v\n", r.s.ID(), ok)
 				return
 			}
 
@@ -317,11 +306,11 @@ func (r *SignalRelay) WriteSignal(ctx context.Context) {
 			err := json.Unmarshal(message, &signal)
 
 			if err != nil {
-				log.Printf("%s: error on deserializing message: %v\n", r.id, err)
+				log.Printf("%s: error on deserializing message: %v\n", r.s.ID(), err)
 				return
 			}
 
-			if signal.PeerId == r.id {
+			if signal.PeerId == r.s.ID() {
 				continue
 			}
 
@@ -329,7 +318,7 @@ func (r *SignalRelay) WriteSignal(ctx context.Context) {
 
 			if err != nil {
 				if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
-					log.Printf("%s: unexpected error on WriteMessage: %v\n", r.id, err)
+					log.Printf("%s: unexpected error on WriteMessage: %v\n", r.s.ID(), err)
 				}
 
 				return

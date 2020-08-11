@@ -13,7 +13,7 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
-
+	"time"
 )
 
 var upgrader = websocket.Upgrader{}
@@ -24,13 +24,64 @@ var rdb = redis.NewClient(&redis.Options{
 	DB:       0,  // use default DB
 })
 
-
+var sessionDuration = 60 * time.Minute
 
 func ws(w http.ResponseWriter, r *http.Request) {
 	tracer := opentracing.GlobalTracer()
 	sctx, _ := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(r.Header))
 	span := tracer.StartSpan("/ws", ext.RPCServerOption(sctx))
 	defer span .Finish()
+
+	ctx := opentracing.ContextWithSpan(context.Background(), span)
+
+	var session Session
+
+	headerId := r.Header.Get("X-Signaling-Session-Id")
+
+	if headerId == "" {
+		id, err := GenerateSessionId(ctx)
+
+		if err != nil {
+			ext.HTTPStatusCode.Set(span, 500)
+			w.WriteHeader(500)
+			return
+		}
+
+		session = NewRedisSession(rdb, sessionDuration, id)
+		span.SetTag("session.id", session.ID())
+
+		if err := session.Create(ctx); err != nil {
+			ext.LogError(span, err)
+			ext.HTTPStatusCode.Set(span, 500)
+			w.WriteHeader(500)
+			return
+		}
+	} else {
+		// If there is a header value and it's in the wrong format, bail.
+		if !ValidateSessionId(ctx, headerId) {
+			ext.HTTPStatusCode.Set(span, 400)
+			w.WriteHeader(400)
+			return
+		}
+
+		session = NewRedisSession(rdb, sessionDuration, headerId)
+		span.SetTag("session.id", session.ID())
+		span.SetTag("session.reconnect", true)
+
+		if err := session.Renew(ctx); err != nil {
+			// If there is a header value and it's for a session we don't know about, bail.
+			if err == ErrSessionUnknown {
+				ext.HTTPStatusCode.Set(span, 400)
+				w.WriteHeader(400)
+				return
+			}
+
+			ext.LogError(span, err)
+			ext.HTTPStatusCode.Set(span, 500)
+			w.WriteHeader(500)
+			return
+		}
+	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 
@@ -40,9 +91,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-
-	ctx := opentracing.ContextWithSpan(context.Background(), span)
-	sessionId, err := StartSignalRelay(ctx, rdb, conn, &SignalRelayOptions{})
+	err = StartSignalRelay(ctx, session, rdb, conn, &SignalRelayOptions{})
 
 	if err != nil {
 		ext.LogError(span, err)
@@ -50,9 +99,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("new signaling session for %s: %s\n", r.RemoteAddr, sessionId)
-
-	span.SetTag("session.id", sessionId)
+	log.Printf("new signaling session for %s: %s\n", r.RemoteAddr, session.ID())
 }
 
 func main() {
