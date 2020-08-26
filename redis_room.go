@@ -172,7 +172,7 @@ func (r *RedisRoom) Publish(ctx context.Context, message []byte) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case err := <-ch:
+	case err := <-ch: // TODO put publish call here to avoid leaking goroutine
 		if err != nil {
 			if !r.joined {
 				return ErrRoomLeft

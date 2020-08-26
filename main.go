@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"github.com/go-redis/redis/v8"
-	"github.com/gorilla/websocket"
+	impl "github.com/gorilla/websocket"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"github.com/uber/jaeger-client-go"
@@ -14,14 +14,16 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"time"
+
+	"github.com/johndistasio/signaling/websocket"
 )
 
-var upgrader = websocket.Upgrader{}
+var upgrader = impl.Upgrader{}
 
 var rdb = redis.NewClient(&redis.Options{
 	Addr:     "localhost:6379",
 	Password: "", // no password set
-	DB:       0,  // use default DB
+	DB:       0,  // use gorilla DB
 })
 
 var sessionDuration = 60 * time.Minute
@@ -102,6 +104,56 @@ func ws(w http.ResponseWriter, r *http.Request) {
 	log.Printf("new signaling session for %s: %s\n", r.RemoteAddr, session.ID())
 }
 
+func ws2(w http.ResponseWriter, r *http.Request) {
+	o := &websocket.Options{
+		ReadLimit: 512,
+		ReadTimeout: 30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+	}
+
+	ws, err := websocket.Upgrade(o, w, r, nil)
+
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	err = ws.Ping(context.Background())
+
+	if err != nil {
+		log.Printf("1: %#v\n", err)
+	}
+
+	ws.Send(context.Background(), []byte("hi"))
+
+	if err != nil {
+		log.Printf("2: %#v\n", err)
+	}
+
+	ws.Send(context.Background(), []byte("hello"))
+
+
+	if err != nil {
+		log.Printf("3: %#v\n", err)
+	}
+
+	for {
+		msg, err := ws.Receive(context.Background())
+
+		if err != nil {
+			log.Printf("4: %#v\n", err)
+			return
+		} else {
+			log.Printf("5: %#v\n", msg)
+		}
+
+		if msg.Type == websocket.PingMessage {
+			ws.Pong(context.Background())
+		}
+	}
+
+}
+
 func main() {
 	// Sample configuration for testing. Use constant sampling to sample every trace
 	// and enable LogSpan to log every span via configured Logger.
@@ -137,6 +189,7 @@ func main() {
 	defer closer.Close()
 
 	http.HandleFunc("/ws", ws)
+	http.HandleFunc("/ws2", ws2)
 	log.Println("Starting websocket server on :9000")
 	err = http.ListenAndServe(":9000", nil)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/gorilla/websocket"
+	websocket2 "github.com/johndistasio/signaling/websocket"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"log"
@@ -14,11 +15,6 @@ import (
 
 // TODO allow for arbitrary rooms
 var room = "test"
-
-var DefaultPongTimeout = 60 * time.Second
-var DefaultWriteTimeout = 10 * time.Second
-var DefaultPingInterval = 30 * time.Second
-var DefaultReadLimit int64 = 512
 
 type SignalRelayOptions struct {
 	// Max time for message writes to the client. If this timeout elapses, we consider the client to be dead.
@@ -35,17 +31,15 @@ type SignalRelayOptions struct {
 }
 
 type SignalRelay struct {
-	pingInterval time.Duration
-	pongTimeout  time.Duration
-	writeTimeout time.Duration
-	readLimit    int64
-	conn         *websocket.Conn
-	rdb          Redis
-	session      Session
-	room         Room
-	once         *sync.Once
-	closeReader  chan struct{}
-	closeWriter  chan struct{}
+	opts        *SignalRelayOptions
+	readLimit   int64
+	conn        *websocket.Conn
+	rdb         Redis
+	session     Session
+	room        Room
+	once        *sync.Once
+	closeReader chan struct{}
+	closeWriter chan struct{}
 }
 
 type Signal struct {
@@ -58,20 +52,10 @@ func StartSignalRelay(ctx context.Context, session Session, rdb Redis, conn *web
 	defer span.Finish()
 	span.SetTag("session.id", session.ID())
 
-	if opts.PongTimeout < 1 {
-		opts.PongTimeout = DefaultPongTimeout
-	}
 
-	if opts.WriteTimeout < 1 {
-		opts.WriteTimeout = DefaultWriteTimeout
-	}
-
-	if opts.PingInterval < 1 {
-		opts.PingInterval = DefaultPingInterval
-	}
 
 	if opts.ReadLimit < 1 {
-		opts.ReadLimit = DefaultReadLimit
+		opts.ReadLimit = websocket2.DefaultReadLimit
 	}
 
 	rr := &RedisRoom{name: room, rdb: rdb}
@@ -79,17 +63,15 @@ func StartSignalRelay(ctx context.Context, session Session, rdb Redis, conn *web
 	rr.Enter(ctx, session.ID(), 30)
 
 	relay := &SignalRelay{
-		pongTimeout:  opts.PongTimeout,
-		writeTimeout: opts.WriteTimeout,
-		pingInterval: opts.PingInterval,
-		readLimit:    opts.ReadLimit,
-		session:      session,
-		rdb:          rdb,
-		conn:         conn,
-		room:         rr,
-		once:         new(sync.Once),
-		closeReader:  make(chan struct{}),
-		closeWriter:  make(chan struct{}),
+		opts:        opts,
+		readLimit:   opts.ReadLimit,
+		session:     session,
+		rdb:         rdb,
+		conn:        conn,
+		room:        rr,
+		once:        new(sync.Once),
+		closeReader: make(chan struct{}),
+		closeWriter: make(chan struct{}),
 	}
 
 	conn.SetCloseHandler(func(code int, text string) error {
@@ -106,7 +88,7 @@ func StartSignalRelay(ctx context.Context, session Session, rdb Redis, conn *web
 		span.SetTag("session.id", session.ID())
 
 		// If this errors then the underlying connection is in a bad state, which is unrecoverable.
-		err := conn.SetReadDeadline(time.Now().Add(relay.pongTimeout))
+		err := conn.SetReadDeadline(time.Now().Add(relay.opts.PongTimeout))
 
 		if err != nil {
 			ext.LogError(span, err)
@@ -237,7 +219,7 @@ func (r *SignalRelay) WriteSignal(ctx context.Context) {
 	span.SetTag("session.id", r.session.ID())
 	defer span.Finish()
 
-	ping := time.NewTicker(r.pingInterval)
+	ping := time.NewTicker(r.opts.PingInterval)
 
 	defer func() {
 		ping.Stop()
