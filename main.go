@@ -1,12 +1,9 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"github.com/go-redis/redis/v8"
-	impl "github.com/gorilla/websocket"
 	"github.com/opentracing/opentracing-go"
-	"github.com/opentracing/opentracing-go/ext"
 	"github.com/uber/jaeger-client-go"
 	jaegerConfig "github.com/uber/jaeger-client-go/config"
 	jaegerLog "github.com/uber/jaeger-client-go/log"
@@ -14,12 +11,8 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
-	"time"
-
-	"github.com/johndistasio/signaling/websocket"
+	"sort"
 )
-
-var upgrader = impl.Upgrader{}
 
 var rdb = redis.NewClient(&redis.Options{
 	Addr:     "localhost:6379",
@@ -27,156 +20,37 @@ var rdb = redis.NewClient(&redis.Options{
 	DB:       0,  // use gorilla DB
 })
 
-var sessionDuration = 60 * time.Minute
+type HeaderPrinter struct {}
 
-func ws(w http.ResponseWriter, r *http.Request) {
-	tracer := opentracing.GlobalTracer()
-	sctx, _ := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(r.Header))
-	span := tracer.StartSpan("/ws", ext.RPCServerOption(sctx))
-	defer span.Finish()
-
-	ctx := opentracing.ContextWithSpan(context.Background(), span)
-
-	var session OldSession
-
-	headerId := r.Header.Get("X-Signaling-Session-Id")
-
-	if headerId == "" {
-		id  := GenerateSessionId(ctx)
-
-		if id == "" {
-			ext.HTTPStatusCode.Set(span, 500)
-			w.WriteHeader(500)
-			return
-		}
-
-		session = NewRedisSession(rdb, sessionDuration, id)
-		span.SetTag("session.id", session.ID())
-
-		if err := session.Create(ctx); err != nil {
-			ext.LogError(span, err)
-			ext.HTTPStatusCode.Set(span, 500)
-			w.WriteHeader(500)
-			return
-		}
-	} else {
-		// If there is a header value and it's in the wrong format, bail.
-		if !ParseSessionId(ctx, headerId) {
-			ext.HTTPStatusCode.Set(span, 400)
-			w.WriteHeader(400)
-			return
-		}
-
-		session = NewRedisSession(rdb, sessionDuration, headerId)
-		span.SetTag("session.id", session.ID())
-		span.SetTag("session.reconnect", true)
-
-		if err := session.Renew(ctx); err != nil {
-			// If there is a header value and it's for a session we don't know about, bail.
-			if err == ErrSessionUnknown {
-				ext.HTTPStatusCode.Set(span, 400)
-				w.WriteHeader(400)
-				return
-			}
-
-			ext.LogError(span, err)
-			ext.HTTPStatusCode.Set(span, 500)
-			w.WriteHeader(500)
-			return
-		}
-	}
-
-	conn, err := upgrader.Upgrade(w, r, nil)
-
-	if err != nil {
-		ext.LogError(span, err)
-		_ = conn.Close()
-		return
-	}
-
-	err = StartSignalRelay(ctx, session, rdb, conn, &SignalRelayOptions{})
-
-	if err != nil {
-		ext.LogError(span, err)
-		_ = conn.Close()
-		return
-	}
-
-	log.Printf("new signaling session for %s: %s\n", r.RemoteAddr, session.ID())
-}
-
-func ws2(w http.ResponseWriter, r *http.Request) {
-	o := &websocket.Options{
-		ReadLimit: 512,
-		ReadTimeout: 30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-	}
-
-	ws, err := websocket.Upgrade(o, w, r, nil)
-
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	err = ws.Ping(context.Background())
-
-	if err != nil {
-		log.Printf("1: %#v\n", err)
-	}
-
-	ws.Send(context.Background(), []byte("hi"))
-
-	if err != nil {
-		log.Printf("2: %#v\n", err)
-	}
-
-	ws.Send(context.Background(), []byte("hello"))
-
-
-	if err != nil {
-		log.Printf("3: %#v\n", err)
-	}
-
-	for {
-		msg, err := ws.Receive(context.Background())
-
-		if err != nil {
-			log.Printf("4: %#v\n", err)
-			return
-		} else {
-			log.Printf("5: %#v\n", msg)
-		}
-
-		if msg.Type == websocket.PingMessage {
-			ws.Pong(context.Background())
-		}
-	}
-
-}
-
-type CookiePrinter struct {}
-
-func (c *CookiePrinter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	a := `
+func (c *HeaderPrinter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	header := `
 <!DOCTYPE html>
 <html>
 <body>
 `
-
-	b := `
+	footer := `
 </body>
 </html>
 `
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(a))
-	for k, v := range r.Header {
-		for _, x := range v {
-			w.Write([]byte(fmt.Sprintf("<p>%s: %v</p>", k, x)))
+	_, _ = w.Write([]byte(header))
+
+	headers := make([]string, len(r.Header))
+
+	for k, _ := range r.Header {
+		headers = append(headers, k)
+	}
+
+	sort.Strings(headers)
+
+	for _, name := range headers {
+		for _, value := range r.Header[name] {
+			_, _ = w.Write([]byte(fmt.Sprintf("<p><b>%s:</b> %v</p>", name, value)))
 		}
 	}
-	w.Write([]byte(b))
+
+	_, _ = w.Write([]byte(footer))
 }
 
 
@@ -218,24 +92,15 @@ func main() {
 	sh := &SessionHandler{
 		Insecure:   true,
 		Javascript: false,
-		Next:              &CookiePrinter{},
+		Next:              &HeaderPrinter{},
 		CreateSessionId:   GenerateSessionId,
 		ValidateSessionId: ParseSessionId,
 	}
 
-	http.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request){
-		ttl, err := rdb.TTL(r.Context(), "l;kdjflakdjf").Result()
-
-		log.Printf("%v %v", ttl, err)
-
-
-	})
-
 	http.Handle("/session", sh)
 
-	http.HandleFunc("/ws", ws)
-	http.HandleFunc("/ws2", ws2)
 	log.Println("Starting websocket server on :9000")
+
 	err = http.ListenAndServe(":9000", nil)
 	if err != nil {
 		log.Fatalf("fatal: %v\n", err)
