@@ -21,6 +21,16 @@ func (m *Redis) Expire(ctx context.Context, key string, expiration time.Duration
 	return args.Get(0).(*redis.BoolCmd)
 }
 
+func (m *Redis) Get(ctx context.Context, key string) *redis.StringCmd{
+	args := m.Called(ctx, key)
+	return args.Get(0).(*redis.StringCmd)
+}
+
+func (m *Redis) Publish(ctx context.Context, channel string, message interface{}) *redis.IntCmd {
+	args := m.Called(ctx, channel, message)
+	return args.Get(0).(*redis.IntCmd)
+}
+
 func (m *Redis) SetNX(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.BoolCmd {
 	args := m.Called(ctx, key, value, expiration)
 	return args.Get(0).(*redis.BoolCmd)
@@ -31,9 +41,9 @@ func (m *Redis) Subscribe(ctx context.Context, channels ...string) *redis.PubSub
 	return args.Get(0).(*redis.PubSub)
 }
 
-func (m *Redis) Publish(ctx context.Context, channel string, message interface{}) *redis.IntCmd {
-	args := m.Called(ctx, channel, message)
-	return args.Get(0).(*redis.IntCmd)
+func (m *Redis) TTL(ctx context.Context, key string) *redis.DurationCmd {
+	args := m.Called(ctx, key)
+	return args.Get(0).(*redis.DurationCmd)
 }
 
 func (m *Redis) Eval(ctx context.Context, script string, keys []string, argv ...interface{}) *redis.Cmd {

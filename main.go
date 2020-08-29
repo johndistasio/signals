@@ -36,7 +36,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 
 	ctx := opentracing.ContextWithSpan(context.Background(), span)
 
-	var session Session
+	var session OldSession
 
 	headerId := r.Header.Get("X-Signaling-Session-Id")
 
@@ -60,7 +60,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// If there is a header value and it's in the wrong format, bail.
-		if !ValidateSessionId(ctx, headerId) {
+		if !ParseSessionId(ctx, headerId) {
 			ext.HTTPStatusCode.Set(span, 400)
 			w.WriteHeader(400)
 			return
@@ -154,6 +154,23 @@ func ws2(w http.ResponseWriter, r *http.Request) {
 
 }
 
+type CookiePrinter struct {}
+
+func (c *CookiePrinter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h := `
+<!DOCTYPE html>
+<html>
+<body>
+<p>hi</p>
+</body>
+</html>
+`
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(h))
+}
+
+
 func main() {
 	// Sample configuration for testing. Use constant sampling to sample every trace
 	// and enable LogSpan to log every span via configured Logger.
@@ -187,6 +204,25 @@ func main() {
 	// Set the singleton opentracing.Tracer with the Jaeger tracer.
 	opentracing.SetGlobalTracer(tracer)
 	defer closer.Close()
+
+
+	sh := &SessionHandler{
+		age: 5 * time.Minute,
+		insecure: true,
+		javascript: false,
+		store: &RedisSessionStore{redis: rdb},
+		next: &CookiePrinter{},
+	}
+
+	http.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request){
+		ttl, err := rdb.TTL(r.Context(), "l;kdjflakdjf").Result()
+
+		log.Printf("%v %v", ttl, err)
+
+
+	})
+
+	http.Handle("/session", sh)
 
 	http.HandleFunc("/ws", ws)
 	http.HandleFunc("/ws2", ws2)

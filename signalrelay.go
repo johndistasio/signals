@@ -35,7 +35,7 @@ type SignalRelay struct {
 	readLimit   int64
 	conn        *websocket.Conn
 	rdb         Redis
-	session     Session
+	session     OldSession
 	room        Room
 	once        *sync.Once
 	closeReader chan struct{}
@@ -47,7 +47,7 @@ type Signal struct {
 	Message string
 }
 
-func StartSignalRelay(ctx context.Context, session Session, rdb Redis, conn *websocket.Conn, opts *SignalRelayOptions) error {
+func StartSignalRelay(ctx context.Context, session OldSession, rdb Redis, conn *websocket.Conn, opts *SignalRelayOptions) error {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "StartSignalRelay")
 	defer span.Finish()
 	span.SetTag("session.id", session.ID())

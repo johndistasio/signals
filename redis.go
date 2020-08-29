@@ -10,9 +10,11 @@ import (
 type Redis interface {
 	Del(ctx context.Context, keys ...string) *redis.IntCmd
 	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
+	Get(ctx context.Context, key string) *redis.StringCmd
 	SetNX(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.BoolCmd
 	Subscribe(ctx context.Context, channels ...string) *redis.PubSub
 	Publish(ctx context.Context, channel string, message interface{}) *redis.IntCmd
+	TTL(ctx context.Context, key string) *redis.DurationCmd
 
 	// Implements the 'scripter' interface from go-redis
 	Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
