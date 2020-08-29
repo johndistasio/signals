@@ -45,16 +45,17 @@ func main() {
 	opentracing.SetGlobalTracer(tracer)
 	defer closer.Close()
 
+	seat := &SeatHandler{}
 
-	sh := &SessionHandler{
-		Insecure:   true,
-		Javascript: false,
-		Next:              &HeaderPrinter{},
+	session := &SessionHandler{
+		Insecure:          true,
+		Javascript:        false,
+		Next:              seat,
 		CreateSessionId:   GenerateSessionId,
 		ValidateSessionId: ParseSessionId,
 	}
 
-	http.Handle("/session", sh)
+	http.Handle("/call", session)
 
 	log.Println("Starting websocket server on :9000")
 

@@ -34,7 +34,7 @@ func (r *RedisRoom) key() string {
 }
 
 // TODO document arguments
-var acquireScript = redis.NewScript(`
+var oldAcquireScript = redis.NewScript(`
 	redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
 
 	if redis.call('ZCARD', KEYS[1]) < tonumber(ARGV[2]) then
@@ -49,7 +49,7 @@ var acquireScript = redis.NewScript(`
 `)
 
 // TODO document arguments
-var releaseScript = redis.NewScript("return redis.call('ZREM', KEYS[1], ARGV[1])")
+var oldReleaseScript = redis.NewScript("return redis.call('ZREM', KEYS[1], ARGV[1])")
 
 func (r *RedisRoom) Enter(ctx context.Context, id string, s int64) (int64, error) {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "RedisRoom.Enter")
@@ -64,7 +64,7 @@ func (r *RedisRoom) Enter(ctx context.Context, id string, s int64) (int64, error
 	// Anything older than this is timed out
 	thenEpoch := nowEpoch - s
 
-	acq, err := acquireScript.Run(ctx, r.rdb, []string{r.key()}, thenEpoch, roomSize, nowEpoch, id).Result()
+	acq, err := oldAcquireScript.Run(ctx, r.rdb, []string{r.key()}, thenEpoch, roomSize, nowEpoch, id).Result()
 
 	if err != nil {
 		ext.LogError(span, err)
@@ -104,7 +104,7 @@ func (r *RedisRoom) Leave(ctx context.Context, id string) error {
 
 	// If either of these operations fail it means we can't talk to Redis, effectively booting us from the room when
 	// the timeout elapses. We should always try both so that any unused resources will be cleaned up.
-	err1 := releaseScript.Run(ctx, r.rdb, []string{r.key()}, id).Err()
+	err1 := oldReleaseScript.Run(ctx, r.rdb, []string{r.key()}, id).Err()
 	err2 := r.pubsub.Close()
 
 	if err1 != nil || err2 != nil {

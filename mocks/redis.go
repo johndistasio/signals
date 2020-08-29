@@ -46,6 +46,11 @@ func (m *Redis) TTL(ctx context.Context, key string) *redis.DurationCmd {
 	return args.Get(0).(*redis.DurationCmd)
 }
 
+func (m *Redis) ZRem(ctx context.Context, key string, members ...interface{}) *redis.IntCmd {
+	args := m.Called(ctx, key, members)
+	return args.Get(0).(*redis.IntCmd)
+}
+
 func (m *Redis) Eval(ctx context.Context, script string, keys []string, argv ...interface{}) *redis.Cmd {
 	args := m.Called(ctx, script, keys, argv)
 	return args.Get(0).(*redis.Cmd)

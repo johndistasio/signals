@@ -15,6 +15,7 @@ type Redis interface {
 	Subscribe(ctx context.Context, channels ...string) *impl.PubSub
 	Publish(ctx context.Context, channel string, message interface{}) *impl.IntCmd
 	TTL(ctx context.Context, key string) *impl.DurationCmd
+	ZRem(ctx context.Context, key string, members ...interface{}) *impl.IntCmd
 
 	// Implements the 'scripter' interface from go-redis
 	Eval(ctx context.Context, script string, keys []string, args ...interface{}) *impl.Cmd
@@ -28,6 +29,10 @@ type PubSub interface {
 	Close() error
 	ReceiveMessage(ctx context.Context) (*impl.Message, error)
 	Subscribe(ctx context.Context, channels ...string) error
+}
+
+func NewScript(src string) *impl.Script {
+	return impl.NewScript(src)
 }
 
 func NewRedisClient() Redis {
