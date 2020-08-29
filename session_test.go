@@ -58,6 +58,19 @@ func TestInjectSessionCookie(t *testing.T) {
 	expected = "id=updated; test=value"
 	InjectSessionCookie(header, "updated")
 	assert.Equal(t, expected, header["Cookie"][0])
+
+}
+
+func TestInjectSessionCookie_NoCookie(t *testing.T) {
+	header := map[string][]string{
+		"User-Agent": {"Go-http-client/1.1"},
+		"Accept-Encoding": {"gzip"},
+	}
+
+	expected := "id=updated"
+
+	InjectSessionCookie(header, "updated")
+	assert.Equal(t, expected, header["Cookie"][0])
 }
 
 // Validate that SessionHandler will set a session cookie on incoming requests without one.

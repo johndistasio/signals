@@ -143,8 +143,16 @@ type SessionHandler struct {
 var sessionCookieRegex = regexp.MustCompile(`((^| )`+SessionCookieName+`=)[\w]+`)
 
 func InjectSessionCookie(h http.Header, id string) {
+	if h["Cookie"] == nil {
+		h["Cookie"] = []string{SessionCookieName+"="+id}
+		return
+	}
+
 	for i := 0; i < len(h["Cookie"]); i++ {
-		h["Cookie"][i] = sessionCookieRegex.ReplaceAllString(h["Cookie"][i], "${1}"+id)
+		if sessionCookieRegex.MatchString(h["Cookie"][i]) {
+			h["Cookie"][i] = sessionCookieRegex.ReplaceAllString(h["Cookie"][i], "${1}"+id)
+			// We don't return here on the off chance that we have a client sending multiple Cookie headers.
+		}
 	}
 }
 
