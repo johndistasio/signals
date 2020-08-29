@@ -8,7 +8,6 @@ import (
 	"github.com/segmentio/ksuid"
 	"net/http"
 	"regexp"
-	"time"
 )
 
 var ErrSessionBackend = errors.New("session backend gone")
@@ -28,7 +27,7 @@ type OldSession interface {
 	Expire(ctx context.Context) error
 }
 
-func GenerateSessionId(ctx context.Context) (string, error) {
+func GenerateSessionId(ctx context.Context) string {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "GenerateSessionId")
 	defer span.Finish()
 
@@ -36,10 +35,10 @@ func GenerateSessionId(ctx context.Context) (string, error) {
 
 	if err != nil {
 		ext.LogError(span, err)
-		return "", ErrSessionId
+		return ""
 	}
 
-	return id.String(), nil
+	return id.String()
 }
 
 func ParseSessionId(ctx context.Context, id string) bool {
@@ -55,101 +54,127 @@ func ParseSessionId(ctx context.Context, id string) bool {
 	return true
 }
 
-type SessionStore interface {
-	Create(ctx context.Context, d time.Duration) (string, error)
-	Read(ctx context.Context, id string) (time.Duration, error)
-	Update(ctx context.Context, id string, d time.Duration) error
-	Delete(ctx context.Context, id string) error
-}
-
 const SessionCookieName = "id"
 
-var SessionCookieRegex = regexp.MustCompile(SessionCookieName + `=[\w]+`)
-
+// SameSite represents valid values for the eponymous cookie attribute. From Mozilla:
+//
+// 		"The SameSite attribute lets servers require that a cookie shouldn't be sent with cross-origin requests
+//		(where Site is defined by the registrable domain), which provides some protection against cross-site request
+//		forgery attacks (CSRF)."
+//
+// This was implemented to provide a zero value of "Strict" mode since net/http's does not.
 type SameSite int
 
 const (
-	Strict SameSite = iota
-	Lax
-	None
+	// Setting a cookie in Strict mode instructs the browser to only send the cookie to the site that set it.
+	SameSiteStrict SameSite = iota
+
+	// Lax mode is similar to strict, but the browser will also send the cookie to third-party sites if they are
+	// navigated to through a link on the originating site.
+	SameSiteLax
+
+	// Always send the cookie to all sites, always.
+	SameSiteNone
 )
 
+var sameSiteString = [...]string{"Strict", "Lax", "None"}
+
 func (s SameSite) String() string {
-	return []string{"Strict", "Lax", "None"}[s]
+	return sameSiteString[s]
 }
 
 // Matches compares net/http's SameSite mode constants against ours.
 func (s SameSite) Matches(v http.SameSite) bool {
-	if s == Strict && v == http.SameSiteStrictMode {
+	if s == SameSiteStrict && v == http.SameSiteStrictMode {
 		return true
 	}
 
-	if s == Lax && v == http.SameSiteLaxMode {
+	if s == SameSiteLax && v == http.SameSiteLaxMode {
 		return true
 
 	}
 
-	if s == None && v == http.SameSiteNoneMode {
+	if s == SameSiteNone && v == http.SameSiteNoneMode {
 		return true
 	}
 
 	return false
 }
 
-// Matches compares net/http's SameSite mode constants against ours.
-func (s SameSite) Stdlib() http.SameSite {
+// Convert translates our mode constant into net/http's SameSite equivalent.
+func (s SameSite) Convert() http.SameSite {
 	switch {
-	case s == Lax:
+	case s == SameSiteLax:
 		return http.SameSiteLaxMode
-	case s == None:
+	case s == SameSiteNone:
 		return http.SameSiteNoneMode
 	default:
 		return http.SameSiteStrictMode
 	}
 }
 
+// SessionHandler is HTTP middleware that manages session cookies on incoming requests.
 type SessionHandler struct {
-	age time.Duration
+	// CreateSessionId is a function that generates a new session ID.
+	CreateSessionId func(context.Context) string
 
-	domain string
+	// ValidateSessionId is a function that determines if a given session ID is valid.
+	ValidateSessionId func(context.Context, string) bool
 
-	// Allow cookies without Secure set.
-	insecure bool
+	// Next is the next handler in the request processing chain.
+	Next http.Handler
 
-	// Allow cookies without HttpOnly set.
-	javascript bool
+	// Generate session cookies without Secure set.
+	Insecure bool
 
-	sameSite SameSite
+	// Generate session cookies without HttpOnly set.
+	Javascript bool
 
-	path string
+	// Value for SameSite attribute of generated session cookies.
+	SameSite SameSite
 
-	store SessionStore
+	// Value for the Domain attribute of generated session cookies.
+	Domain string
 
-	next http.Handler
+	// Value for the Path attribute of generated session cookies.
+	Path string
 }
 
-func ReplaceSessionCookie(h http.Header, id string) {
-	for i := 0; i < len(h["Cookie"]); i++ {
-		h["Cookie"][i] = SessionCookieRegex.ReplaceAllString(h["Cookie"][i], SessionCookieName+"="+id)
-	}
-}
+var sessionCookieRegex = regexp.MustCompile(`((^| )`+SessionCookieName+`=)[\w]+`)
 
 func InjectSessionCookie(h http.Header, id string) {
-	h["Cookie"] = append(h["Cookie"], SessionCookieName+"="+id)
-}
-
-func (s *SessionHandler) CreateCookie(id string) *http.Cookie {
-	return &http.Cookie{
-		Name:     SessionCookieName,
-		Value:    id,
-		Domain:   s.domain,
-		Path:     s.path,
-		HttpOnly: !s.javascript,
-		Secure:   !s.insecure,
-		SameSite: s.sameSite.Stdlib(),
+	for i := 0; i < len(h["Cookie"]); i++ {
+		h["Cookie"][i] = sessionCookieRegex.ReplaceAllString(h["Cookie"][i], "${1}"+id)
 	}
 }
 
+// DefaultSessionHandler returns a SessionHandler preconfigured with the default session creation and validation
+// functions and a simple follow-up handler that always returns HTTP 200 OK.
+func DefaultSessionHandler() *SessionHandler {
+	return &SessionHandler{
+		CreateSessionId:   GenerateSessionId,
+		ValidateSessionId: ParseSessionId,
+		Next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	}
+}
+
+// CreateCookie generates an *http.Cookie configured using the SessionHandler's cookie settings.
+func (s *SessionHandler) CreateCookie(value string) *http.Cookie {
+	return &http.Cookie{
+		Name:     SessionCookieName,
+		Value:    value,
+		Domain:   s.Domain,
+		Path:     s.Path,
+		HttpOnly: !s.Javascript,
+		Secure:   !s.Insecure,
+		SameSite: s.SameSite.Convert(),
+	}
+}
+
+// ServeHTTP implements net/http.Handler. It will set or replace session cookies as necessary and forward the request
+// to the handler set as SessionHandler.Next.
 func (s *SessionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tracer := opentracing.GlobalTracer()
 	sctx, _ := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(r.Header))
@@ -159,47 +184,16 @@ func (s *SessionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	cookie, err := r.Cookie(SessionCookieName)
 
-	if err != nil {
-		id, err := s.store.Create(ctx, s.age)
-
-		if err != nil {
-			ext.LogError(span, err)
-			http.Error(w, "session creation failure", 500)
-			return
-		}
+	if err != nil || !s.ValidateSessionId(ctx, cookie.Value) {
+		id := s.CreateSessionId(ctx)
 
 		span.SetTag("session.id", id)
-
 		InjectSessionCookie(r.Header, id)
 		http.SetCookie(w, s.CreateCookie(id))
 
-		s.next.ServeHTTP(w, r)
-		return
+	} else {
+		span.SetTag("session.id", cookie.Value)
 	}
 
-	err = s.store.Update(ctx, cookie.Value, s.age)
-
-	if err == ErrSessionBackend {
-		ext.LogError(span, err)
-		http.Error(w, "session update failure", 500)
-		return
-	}
-
-	if err != nil {
-		id, err := s.store.Create(ctx, s.age)
-
-		if err != nil {
-			ext.LogError(span, err)
-			http.Error(w, "session creation failure", 500)
-			return
-		}
-
-		cookie = s.CreateCookie(id)
-		ReplaceSessionCookie(r.Header, id)
-		http.SetCookie(w, cookie)
-	}
-
-	span.SetTag("session.id", cookie.Value)
-
-	s.next.ServeHTTP(w, r)
+	s.Next.ServeHTTP(w, r)
 }

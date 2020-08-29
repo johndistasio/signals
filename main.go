@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"github.com/go-redis/redis/v8"
 	impl "github.com/gorilla/websocket"
 	"github.com/opentracing/opentracing-go"
@@ -41,9 +42,9 @@ func ws(w http.ResponseWriter, r *http.Request) {
 	headerId := r.Header.Get("X-Signaling-Session-Id")
 
 	if headerId == "" {
-		id, err := GenerateSessionId(ctx)
+		id  := GenerateSessionId(ctx)
 
-		if err != nil {
+		if id == "" {
 			ext.HTTPStatusCode.Set(span, 500)
 			w.WriteHeader(500)
 			return
@@ -157,17 +158,25 @@ func ws2(w http.ResponseWriter, r *http.Request) {
 type CookiePrinter struct {}
 
 func (c *CookiePrinter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h := `
+	a := `
 <!DOCTYPE html>
 <html>
 <body>
-<p>hi</p>
+`
+
+	b := `
 </body>
 </html>
 `
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(h))
+	w.Write([]byte(a))
+	for k, v := range r.Header {
+		for _, x := range v {
+			w.Write([]byte(fmt.Sprintf("<p>%s: %v</p>", k, x)))
+		}
+	}
+	w.Write([]byte(b))
 }
 
 
@@ -207,11 +216,11 @@ func main() {
 
 
 	sh := &SessionHandler{
-		age: 5 * time.Minute,
-		insecure: true,
-		javascript: false,
-		store: &RedisSessionStore{redis: rdb},
-		next: &CookiePrinter{},
+		Insecure:   true,
+		Javascript: false,
+		Next:              &CookiePrinter{},
+		CreateSessionId:   GenerateSessionId,
+		ValidateSessionId: ParseSessionId,
 	}
 
 	http.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request){
