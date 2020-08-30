@@ -193,10 +193,7 @@ func (s *SessionHandler) CreateCookie(value string) *http.Cookie {
 // ServeHTTP implements net/http.Handler. It will set or replace session cookies as necessary and forward the request
 // to the handler set as SessionHandler.Next.
 func (s *SessionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	tracer := opentracing.GlobalTracer()
-	sctx, _ := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(r.Header))
-	span := tracer.StartSpan("SessionHandler.ServeHTTP", ext.RPCServerOption(sctx))
-	ctx := opentracing.ContextWithSpan(r.Context(), span)
+	span, ctx := opentracing.StartSpanFromContext(r.Context(), "SessionHandler.ServeHTTP")
 	defer span.Finish()
 
 	var id string

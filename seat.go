@@ -8,6 +8,7 @@ import (
 )
 
 
+
 func SeatHandler(session string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SeatHandler")
@@ -28,21 +29,15 @@ func SeatHandler(session string) http.Handler {
 		acq, err := sem.Acquire(ctx, "test", session)
 
 		if err != nil {
-			ext.LogError(span, err)
-			//ext.HTTPStatusCode.Set(span, http.StatusInternalServerError)
 			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
 			return
 		}
 
 		if !acq {
-			ext.HTTPStatusCode.Set(span, http.StatusConflict)
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
 
 		w.WriteHeader(http.StatusOK)
-
-		// https://ndersson.me/post/capturing_status_code_in_net_http/
-		ext.HTTPStatusCode.Set(span, http.StatusOK)
 	})
 }

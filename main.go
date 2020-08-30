@@ -54,7 +54,7 @@ func main() {
 		ValidateSessionId: ParseSessionId,
 	}
 
-	http.Handle("/call/", session)
+	http.Handle("/call/", TraceHandler(session))
 
 	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
