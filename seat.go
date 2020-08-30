@@ -7,7 +7,6 @@ import (
 	"net/http"
 )
 
-
 type SeatHandler struct {
 	lock Semaphore
 }

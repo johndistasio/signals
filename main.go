@@ -6,13 +6,14 @@ import (
 	jaegerConfig "github.com/uber/jaeger-client-go/config"
 	jaegerLog "github.com/uber/jaeger-client-go/log"
 	jaegerMetrics "github.com/uber/jaeger-lib/metrics"
+	"io"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"time"
 )
 
-func main() {
+func initTracer() (opentracing.Tracer, io.Closer, error) {
 	// Sample configuration for testing. Use constant sampling to sample every trace
 	// and enable LogSpan to log every span via configured Logger.
 	cfg := jaegerConfig.Configuration{
@@ -33,10 +34,14 @@ func main() {
 	jMetricsFactory := jaegerMetrics.NullFactory
 
 	// Initialize tracer with a logger and a metrics factory
-	tracer, closer, err := cfg.NewTracer(
+	return cfg.NewTracer(
 		jaegerConfig.Logger(jLogger),
 		jaegerConfig.Metrics(jMetricsFactory),
 	)
+}
+
+func main() {
+	tracer, closer, err := initTracer()
 
 	if err != nil {
 		log.Fatalf("fatal: %v\n", err)
@@ -45,7 +50,6 @@ func main() {
 	// Set the singleton opentracing.Tracer with the Jaeger tracer.
 	opentracing.SetGlobalTracer(tracer)
 	defer closer.Close()
-
 
 	locker := &RedisSemaphore{
 		Age:   10 * time.Second,
@@ -66,9 +70,9 @@ func main() {
 
 	router := &RoutingMiddleware{
 		SessionMiddleware: session,
-		SeatHandler: seat,
-		SignalHandler: signal,
-		WebsocketHandler: ws,
+		SeatHandler:       seat,
+		SignalHandler:     signal,
+		WebsocketHandler:  ws,
 	}
 
 	http.Handle("/", TraceHandler(router))

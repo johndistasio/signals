@@ -29,9 +29,8 @@ func (w *TracingResponseWriter) Header() http.Header {
 	return w.ResponseWriter.Header()
 }
 
-
 func TraceHandler(handler http.Handler) http.Handler {
-	return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tracer := opentracing.GlobalTracer()
 		spanCtx, _ := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(r.Header))
 		span := tracer.StartSpan(r.URL.Path, ext.RPCServerOption(spanCtx))

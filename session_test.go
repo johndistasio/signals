@@ -40,9 +40,9 @@ func TestSessionHandler_CreateCookie(t *testing.T) {
 
 func TestInjectSessionCookie(t *testing.T) {
 	header := map[string][]string{
-		"User-Agent": {"Go-http-client/1.1"},
+		"User-Agent":      {"Go-http-client/1.1"},
 		"Accept-Encoding": {"gzip"},
-		"Cookie": {"foo=bar; id=original; test=value"},
+		"Cookie":          {"foo=bar; id=original; test=value"},
 	}
 
 	expected := "foo=bar; id=updated; test=value"
@@ -50,9 +50,9 @@ func TestInjectSessionCookie(t *testing.T) {
 	assert.Equal(t, expected, header["Cookie"][0])
 
 	header = map[string][]string{
-		"User-Agent": {"Go-http-client/1.1"},
+		"User-Agent":      {"Go-http-client/1.1"},
 		"Accept-Encoding": {"gzip"},
-		"Cookie": {"id=original; test=value"},
+		"Cookie":          {"id=original; test=value"},
 	}
 
 	expected = "id=updated; test=value"
@@ -63,7 +63,7 @@ func TestInjectSessionCookie(t *testing.T) {
 
 func TestInjectSessionCookie_NoCookie(t *testing.T) {
 	header := map[string][]string{
-		"User-Agent": {"Go-http-client/1.1"},
+		"User-Agent":      {"Go-http-client/1.1"},
 		"Accept-Encoding": {"gzip"},
 	}
 
@@ -87,7 +87,7 @@ func TestSessionMiddleware_Handler(t *testing.T) {
 	server := httptest.NewServer(mw.Handler(nil))
 	defer server.Close()
 
-	req, _:= http.NewRequest("GET", server.URL, nil)
+	req, _ := http.NewRequest("GET", server.URL, nil)
 
 	res, _ := (&http.Client{}).Do(req)
 
@@ -116,7 +116,7 @@ func TestSessionHandler_ServeHTTP_ExistingSession(t *testing.T) {
 	server := httptest.NewServer(mw.Handler(nil))
 	defer server.Close()
 
-	req, _:= http.NewRequest("GET", server.URL, nil)
+	req, _ := http.NewRequest("GET", server.URL, nil)
 
 	req.Header.Add("Cookie", SessionCookieName+"=test")
 
@@ -125,7 +125,7 @@ func TestSessionHandler_ServeHTTP_ExistingSession(t *testing.T) {
 	assert.Condition(t, func() bool {
 		for _, cookie := range res.Cookies() {
 			if cookie.Name == SessionCookieName {
-					return false
+				return false
 			}
 		}
 
@@ -149,7 +149,7 @@ func TestSessionHandler_ServeHTTP_BadSession(t *testing.T) {
 
 	badCookie := "abc123"
 
-	req, _:= http.NewRequest("GET", server.URL, nil)
+	req, _ := http.NewRequest("GET", server.URL, nil)
 
 	req.Header.Add("Cookie", SessionCookieName+"="+badCookie)
 
