@@ -42,6 +42,7 @@ func (s *SeatHandler) Handle(session string, call string) http.Handler {
 
 type SignalHandler struct {
 	lock Semaphore
+	redis Redis
 }
 
 func (s *SignalHandler) Handle(session string, call string) http.Handler {

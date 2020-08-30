@@ -26,6 +26,11 @@ func (m *Redis) Get(ctx context.Context, key string) *redis.StringCmd{
 	return args.Get(0).(*redis.StringCmd)
 }
 
+func (m *Redis) Ping(ctx context.Context) *redis.StatusCmd {
+	args := m.Called(ctx)
+	return args.Get(0).(*redis.StatusCmd)
+}
+
 func (m *Redis) Publish(ctx context.Context, channel string, message interface{}) *redis.IntCmd {
 	args := m.Called(ctx, channel, message)
 	return args.Get(0).(*redis.IntCmd)

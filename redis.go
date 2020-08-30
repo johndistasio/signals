@@ -13,6 +13,7 @@ type Redis interface {
 	Get(ctx context.Context, key string) *impl.StringCmd
 	SetNX(ctx context.Context, key string, value interface{}, expiration time.Duration) *impl.BoolCmd
 	Subscribe(ctx context.Context, channels ...string) *impl.PubSub
+	Ping(ctx context.Context) *impl.StatusCmd
 	Publish(ctx context.Context, channel string, message interface{}) *impl.IntCmd
 	TTL(ctx context.Context, key string) *impl.DurationCmd
 	ZRem(ctx context.Context, key string, members ...interface{}) *impl.IntCmd

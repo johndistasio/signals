@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"github.com/opentracing/opentracing-go"
 	"github.com/uber/jaeger-client-go"
 	jaegerConfig "github.com/uber/jaeger-client-go/config"
@@ -51,10 +52,12 @@ func main() {
 	opentracing.SetGlobalTracer(tracer)
 	defer closer.Close()
 
+	rdb := NewRedisClient()
+
 	locker := &RedisSemaphore{
 		Age:   10 * time.Second,
 		Count: 2,
-		Redis: NewRedisClient(),
+		Redis: rdb,
 	}
 
 	session := &SessionMiddleware{
@@ -65,7 +68,7 @@ func main() {
 	}
 
 	seat := &SeatHandler{locker}
-	signal := &SignalHandler{locker}
+	signal := &SignalHandler{locker, rdb}
 	ws := &WebsocketHandler{locker}
 
 	router := &RoutingMiddleware{
@@ -74,6 +77,22 @@ func main() {
 		SignalHandler:     signal,
 		WebsocketHandler:  ws,
 	}
+
+	http.Handle("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s, err := rdb.Ping(context.Background()).Result()
+
+		if err != nil {
+			log.Printf("error: %v\n", err)
+			http.Error(w, "unhealthy", http.StatusInternalServerError)
+			return
+		}
+
+		if s != "PONG" {
+			log.Printf("unexpected response from redis: %v\n", s)
+			http.Error(w, "unhealthy", http.StatusInternalServerError)
+			return
+		}
+	}))
 
 	http.Handle("/", TraceHandler(router))
 
