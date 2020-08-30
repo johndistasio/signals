@@ -84,7 +84,7 @@ func TestSessionMiddleware_Handler(t *testing.T) {
 		},
 	}
 
-	server := httptest.NewServer(mw.Handler(nil))
+	server := httptest.NewServer(mw.Handle(nil))
 	defer server.Close()
 
 	req, _ := http.NewRequest("GET", server.URL, nil)
@@ -113,7 +113,7 @@ func TestSessionHandler_ServeHTTP_ExistingSession(t *testing.T) {
 		},
 	}
 
-	server := httptest.NewServer(mw.Handler(nil))
+	server := httptest.NewServer(mw.Handle(nil))
 	defer server.Close()
 
 	req, _ := http.NewRequest("GET", server.URL, nil)
@@ -144,7 +144,7 @@ func TestSessionHandler_ServeHTTP_BadSession(t *testing.T) {
 		},
 	}
 
-	server := httptest.NewServer(mw.Handler(nil))
+	server := httptest.NewServer(mw.Handle(nil))
 	defer server.Close()
 
 	badCookie := "abc123"
