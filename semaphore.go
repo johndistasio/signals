@@ -11,14 +11,13 @@ import (
 var ErrSemaphoreGone = errors.New("semaphore backend gone")
 
 type Semaphore interface {
-	Acquire(ctx context.Context, id string) (bool, error)
-	Release(ctx context.Context, id string) error
+	Acquire(ctx context.Context, name string, id string) (bool, error)
+	Release(ctx context.Context, name, id string) error
 }
 
 type RedisSemaphore struct {
 	Age   time.Duration
 	Count int
-	Name string
 	Redis Redis
 }
 
@@ -37,7 +36,7 @@ var acquireScript = NewScript(`
 	end
 `)
 
-func (r *RedisSemaphore) Acquire(ctx context.Context, id string) (bool, error) {
+func (r *RedisSemaphore) Acquire(ctx context.Context, name string, id string) (bool, error) {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "RedisSemaphore.Acquire")
 	defer span.Finish()
 
@@ -47,7 +46,7 @@ func (r *RedisSemaphore) Acquire(ctx context.Context, id string) (bool, error) {
 	nowEpoch := now.Unix()
 	thenEpoch := then.Unix()
 
-	acq, err := acquireScript.Eval(ctx, r.Redis, []string{r.Name}, thenEpoch, r.Count, nowEpoch, id).Result()
+	acq, err := acquireScript.Eval(ctx, r.Redis, []string{name}, thenEpoch, r.Count, nowEpoch, id).Result()
 
 	if err != nil {
 		ext.LogError(span, err)
@@ -57,11 +56,11 @@ func (r *RedisSemaphore) Acquire(ctx context.Context, id string) (bool, error) {
 	return acq == int64(1), nil
 }
 
-func (r *RedisSemaphore) Release(ctx context.Context, id string) error {
+func (r *RedisSemaphore) Release(ctx context.Context, name string, id string) error {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "RedisSemaphore.Release")
 	defer span.Finish()
 
-	err := r.Redis.ZRem(ctx, r.Name, id).Err()
+	err := r.Redis.ZRem(ctx, name, id).Err()
 
 	if err != nil {
 		ext.LogError(span, err)
