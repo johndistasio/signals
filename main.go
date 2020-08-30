@@ -54,7 +54,11 @@ func main() {
 		ValidateSessionId: ParseSessionId,
 	}
 
-	http.Handle("/call", session)
+	http.Handle("/call/", session)
+
+	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
 
 	log.Println("Starting websocket server on :9000")
 

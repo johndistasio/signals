@@ -7,12 +7,17 @@ import (
 	"time"
 )
 
+
 func SeatHandler(session string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SeatHandler")
 		defer span.Finish()
 
-		span.SetTag("session.id", session)
+		if r.Method != "GET" {
+			ext.HTTPStatusCode.Set(span, http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 
 		sem := &RedisSemaphore{
 			Age:   10 * time.Second,
@@ -24,15 +29,20 @@ func SeatHandler(session string) http.Handler {
 
 		if err != nil {
 			ext.LogError(span, err)
+			//ext.HTTPStatusCode.Set(span, http.StatusInternalServerError)
 			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
 			return
 		}
 
 		if !acq {
+			ext.HTTPStatusCode.Set(span, http.StatusConflict)
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
 
 		w.WriteHeader(http.StatusOK)
+
+		// https://ndersson.me/post/capturing_status_code_in_net_http/
+		ext.HTTPStatusCode.Set(span, http.StatusOK)
 	})
 }
