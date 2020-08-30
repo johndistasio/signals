@@ -9,42 +9,37 @@ import (
 
 type SeatHandler struct{}
 
-func (s *SeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	tracer := opentracing.GlobalTracer()
-	sctx, _ := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(r.Header))
-	span := tracer.StartSpan("SeatHandler.ServeHTTP", ext.RPCServerOption(sctx))
-	ctx := opentracing.ContextWithSpan(r.Context(), span)
-	defer span.Finish()
 
-	session, err := r.Cookie(SessionCookieName)
+func (s *SeatHandler) Handler(session string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tracer := opentracing.GlobalTracer()
+		sctx, _ := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(r.Header))
+		span := tracer.StartSpan("SeatHandler.ServeHTTP", ext.RPCServerOption(sctx))
+		ctx := opentracing.ContextWithSpan(r.Context(), span)
+		defer span.Finish()
 
-	if err != nil {
-		ext.LogError(span, err)
-		http.Error(w, "no session found", http.StatusBadRequest)
-		return
-	}
+		span.SetTag("session.id", session)
 
-	span.SetTag("session.id", session.Value)
+		sem := &RedisSemaphore{
+			Age:   10 * time.Second,
+			Name:  "test",
+			Count: 2,
+			Redis: NewRedisClient(),
+		}
 
-	sem := &RedisSemaphore{
-		Age:   10 * time.Second,
-		Name:  "test",
-		Count: 2,
-		Redis: NewRedisClient(),
-	}
+		acq, err := sem.Acquire(ctx, session)
 
-	acq, err := sem.Acquire(ctx, session.Value)
+		if err != nil {
+			ext.LogError(span, err)
+			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
+			return
+		}
 
-	if err != nil {
-		ext.LogError(span, err)
-		http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
-		return
-	}
+		if !acq {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
 
-	if !acq {
-		w.WriteHeader(http.StatusConflict)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusOK)
+	})
 }

@@ -113,6 +113,10 @@ func (s SameSite) Convert() http.SameSite {
 	}
 }
 
+type AppHandler interface {
+	Handler(session string) http.Handler
+}
+
 // SessionHandler is HTTP middleware that manages session cookies on incoming requests.
 type SessionHandler struct {
 	// CreateSessionId is a function that generates a new session ID.
