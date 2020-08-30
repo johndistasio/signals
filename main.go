@@ -45,12 +45,11 @@ func main() {
 	opentracing.SetGlobalTracer(tracer)
 	defer closer.Close()
 
-	seat := &SeatHandler{}
 
 	session := &SessionHandler{
 		Insecure:          true,
 		Javascript:        false,
-		Next:              seat,
+		Next:              SeatHandler,
 		CreateSessionId:   GenerateSessionId,
 		ValidateSessionId: ParseSessionId,
 	}

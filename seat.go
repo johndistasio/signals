@@ -7,27 +7,20 @@ import (
 	"time"
 )
 
-type SeatHandler struct{}
-
-
-func (s *SeatHandler) Handler(session string) http.Handler {
+func SeatHandler(session string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tracer := opentracing.GlobalTracer()
-		sctx, _ := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(r.Header))
-		span := tracer.StartSpan("SeatHandler.ServeHTTP", ext.RPCServerOption(sctx))
-		ctx := opentracing.ContextWithSpan(r.Context(), span)
+		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SeatHandler")
 		defer span.Finish()
 
 		span.SetTag("session.id", session)
 
 		sem := &RedisSemaphore{
 			Age:   10 * time.Second,
-			Name:  "test",
 			Count: 2,
 			Redis: NewRedisClient(),
 		}
 
-		acq, err := sem.Acquire(ctx, session)
+		acq, err := sem.Acquire(ctx, "test", session)
 
 		if err != nil {
 			ext.LogError(span, err)

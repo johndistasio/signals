@@ -113,10 +113,6 @@ func (s SameSite) Convert() http.SameSite {
 	}
 }
 
-type AppHandler interface {
-	Handler(session string) http.Handler
-}
-
 // SessionHandler is HTTP middleware that manages session cookies on incoming requests.
 type SessionHandler struct {
 	// CreateSessionId is a function that generates a new session ID.
@@ -126,7 +122,7 @@ type SessionHandler struct {
 	ValidateSessionId func(context.Context, string) bool
 
 	// Next is the next handler in the request processing chain.
-	Next http.Handler
+	Next AppHandler
 
 	// Generate session cookies without Secure set.
 	Insecure bool
@@ -160,15 +156,24 @@ func InjectSessionCookie(h http.Header, id string) {
 	}
 }
 
+
+type AppHandler func(session string) http.Handler
+
 // DefaultSessionHandler returns a SessionHandler preconfigured with the default session creation and validation
 // functions and a simple follow-up handler that always returns HTTP 200 OK.
 func DefaultSessionHandler() *SessionHandler {
+
+	f := func(string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+	}
+
+
 	return &SessionHandler{
 		CreateSessionId:   GenerateSessionId,
 		ValidateSessionId: ParseSessionId,
-		Next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}),
+		Next: f,
 	}
 }
 
@@ -194,18 +199,21 @@ func (s *SessionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := opentracing.ContextWithSpan(r.Context(), span)
 	defer span.Finish()
 
+	var id string
+
 	cookie, err := r.Cookie(SessionCookieName)
 
 	if err != nil || !s.ValidateSessionId(ctx, cookie.Value) {
-		id := s.CreateSessionId(ctx)
+		id = s.CreateSessionId(ctx)
 
-		span.SetTag("session.id", id)
 		InjectSessionCookie(r.Header, id)
 		http.SetCookie(w, s.CreateCookie(id))
 
 	} else {
-		span.SetTag("session.id", cookie.Value)
+		id = cookie.Value
 	}
 
-	s.Next.ServeHTTP(w, r)
+	span.SetTag("session.id", id)
+
+	s.Next(id).ServeHTTP(w, r.WithContext(ctx))
 }
