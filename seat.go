@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/gorilla/websocket"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"net/http"
@@ -55,11 +56,36 @@ type WebsocketHandler struct {
 	lock Semaphore
 }
 
+var upgrader = websocket.Upgrader{}
+
 func (w *WebsocketHandler) Handle(session string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, _ := opentracing.StartSpanFromContext(r.Context(), "WebsocketHandler.Handle")
 		defer span.Finish()
-		msg := fmt.Sprintf("WebsocketHandler: %s\n", session)
-		_, _ = w.Write([]byte(msg))
+
+		// Unwrap the ResponseWriter because TracingResponseWriter doesn't implement http.Hijacker.
+		conn, err := upgrader.Upgrade(w.(*TracingResponseWriter).ResponseWriter, r, nil)
+
+		if err != nil {
+			ext.LogError(span, err)
+			return
+		}
+
+		go func() {
+			defer conn.Close()
+			for {
+				_, msg, err := conn.ReadMessage()
+
+				if err != nil {
+					return
+				}
+
+				err = conn.WriteMessage(websocket.TextMessage, msg)
+
+				if err != nil {
+					return
+				}
+			}
+		}()
 	})
 }
