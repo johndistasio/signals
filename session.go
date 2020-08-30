@@ -166,7 +166,7 @@ func (s *SessionMiddleware) CreateCookie(value string) *http.Cookie {
 	}
 }
 
-func (s *SessionMiddleware) Handle(next AppHandler) http.Handler {
+func (s *SessionMiddleware) Handle(call string, next AppHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SessionMiddleware.Handle")
 		defer span.Finish()
@@ -188,7 +188,7 @@ func (s *SessionMiddleware) Handle(next AppHandler) http.Handler {
 		span.SetTag("session.id", id)
 
 		if next != nil {
-			next.Handle(id).ServeHTTP(w, r.WithContext(ctx))
+			next.Handle(id, call).ServeHTTP(w, r.WithContext(ctx))
 		}
 	})
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"github.com/gorilla/websocket"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
@@ -12,7 +11,9 @@ type SeatHandler struct {
 	lock Semaphore
 }
 
-func (s *SeatHandler) Handle(session string) http.Handler {
+const CallKeyPrefix = "call:"
+
+func (s *SeatHandler) Handle(session string, call string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SeatHandler.Handle")
 		defer span.Finish()
@@ -23,7 +24,7 @@ func (s *SeatHandler) Handle(session string) http.Handler {
 			return
 		}
 
-		acq, err := s.lock.Acquire(ctx, "test", session)
+		acq, err := s.lock.Acquire(ctx, CallKeyPrefix+call,session)
 
 		if err != nil {
 			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
@@ -43,12 +44,25 @@ type SignalHandler struct {
 	lock Semaphore
 }
 
-func (s *SignalHandler) Handle(session string) http.Handler {
+func (s *SignalHandler) Handle(session string, call string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		span, _ := opentracing.StartSpanFromContext(r.Context(), "SignalHandler.Handle")
+		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SignalHandler.Handle")
 		defer span.Finish()
-		msg := fmt.Sprintf("SignalHandler: %s\n", session)
-		_, _ = w.Write([]byte(msg))
+
+		acq, err := s.lock.Acquire(ctx, CallKeyPrefix+call,session)
+
+		if err != nil {
+			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
+			return
+		}
+
+		if !acq {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		// TODO publish to redis
+
 	})
 }
 
@@ -58,7 +72,7 @@ type WebsocketHandler struct {
 
 var upgrader = websocket.Upgrader{}
 
-func (w *WebsocketHandler) Handle(session string) http.Handler {
+func (w *WebsocketHandler) Handle(session string, call string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, _ := opentracing.StartSpanFromContext(r.Context(), "WebsocketHandler.Handle")
 		defer span.Finish()

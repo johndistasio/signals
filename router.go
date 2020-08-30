@@ -6,6 +6,8 @@ import (
 	"regexp"
 )
 
+var callRegex = regexp.MustCompile(`^/call/([a-zA-Z0-9_\-]+)/?`)
+
 var seatRegex = regexp.MustCompile(`^/call/([a-zA-Z0-9_\-]+)/?$`)
 
 var signalRegex = regexp.MustCompile(`^/call/([a-zA-Z0-9_\-]+)/signal/?$`)
@@ -13,7 +15,7 @@ var signalRegex = regexp.MustCompile(`^/call/([a-zA-Z0-9_\-]+)/signal/?$`)
 var wsRegex = regexp.MustCompile(`^/call/([a-zA-Z0-9_\-]+)/ws/?$`)
 
 type AppHandler interface {
-	Handle(string) http.Handler
+	Handle(string, string) http.Handler
 }
 
 type RoutingMiddleware struct {
@@ -26,8 +28,6 @@ type RoutingMiddleware struct {
 func (s *RoutingMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	span, ctx := opentracing.StartSpanFromContext(r.Context(), "RoutingMiddleware.Handle")
 	defer span.Finish()
-
-	// TODO add the value of the call ID path element as a span tag here
 
 	var h AppHandler
 
@@ -46,5 +46,16 @@ func (s *RoutingMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.SessionMiddleware.Handle(h).ServeHTTP(w, r.WithContext(ctx))
+	c := callRegex.FindStringSubmatch(r.URL.Path)
+
+	if c == nil || len(c) < 1{
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	call := c[1]
+
+	span.SetTag("call.id", call)
+
+	s.SessionMiddleware.Handle(call, h).ServeHTTP(w, r.WithContext(ctx))
 }
