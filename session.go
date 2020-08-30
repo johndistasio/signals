@@ -113,16 +113,13 @@ func (s SameSite) Convert() http.SameSite {
 	}
 }
 
-// SessionHandler is HTTP middleware that manages session cookies on incoming requests.
-type SessionHandler struct {
+// SessionMiddleware is HTTP middleware that manages session cookies on incoming requests.
+type SessionMiddleware struct {
 	// CreateSessionId is a function that generates a new session ID.
 	CreateSessionId func(context.Context) string
 
 	// ValidateSessionId is a function that determines if a given session ID is valid.
 	ValidateSessionId func(context.Context, string) bool
-
-	// Next is the next handler in the request processing chain.
-	Next AppHandler
 
 	// Generate session cookies without Secure set.
 	Insecure bool
@@ -140,11 +137,11 @@ type SessionHandler struct {
 	Path string
 }
 
-var sessionCookieRegex = regexp.MustCompile(`((^| )`+SessionCookieName+`=)[\w]+`)
+var sessionCookieRegex = regexp.MustCompile(`((^| )` + SessionCookieName + `=)[\w]+`)
 
 func InjectSessionCookie(h http.Header, id string) {
 	if h["Cookie"] == nil {
-		h["Cookie"] = []string{SessionCookieName+"="+id}
+		h["Cookie"] = []string{SessionCookieName + "=" + id}
 		return
 	}
 
@@ -156,29 +153,8 @@ func InjectSessionCookie(h http.Header, id string) {
 	}
 }
 
-
-type AppHandler func(session string) http.Handler
-
-// DefaultSessionHandler returns a SessionHandler preconfigured with the default session creation and validation
-// functions and a simple follow-up handler that always returns HTTP 200 OK.
-func DefaultSessionHandler() *SessionHandler {
-
-	f := func(string) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})
-	}
-
-
-	return &SessionHandler{
-		CreateSessionId:   GenerateSessionId,
-		ValidateSessionId: ParseSessionId,
-		Next: f,
-	}
-}
-
-// CreateCookie generates an *http.Cookie configured using the SessionHandler's cookie settings.
-func (s *SessionHandler) CreateCookie(value string) *http.Cookie {
+// CreateCookie generates an *http.Cookie configured per SessionMiddleware's cookie settings.
+func (s *SessionMiddleware) CreateCookie(value string) *http.Cookie {
 	return &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    value,
@@ -190,27 +166,29 @@ func (s *SessionHandler) CreateCookie(value string) *http.Cookie {
 	}
 }
 
-// ServeHTTP implements net/http.Handler. It will set or replace session cookies as necessary and forward the request
-// to the handler set as SessionHandler.Next.
-func (s *SessionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	span, ctx := opentracing.StartSpanFromContext(r.Context(), "SessionHandler.ServeHTTP")
-	defer span.Finish()
+func (s *SessionMiddleware) Handle(next AppHandler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SessionMiddleware.Handle")
+		defer span.Finish()
 
-	var id string
+		var id string
 
-	cookie, err := r.Cookie(SessionCookieName)
+		cookie, err := r.Cookie(SessionCookieName)
 
-	if err != nil || !s.ValidateSessionId(ctx, cookie.Value) {
-		id = s.CreateSessionId(ctx)
+		if err != nil || !s.ValidateSessionId(ctx, cookie.Value) {
+			id = s.CreateSessionId(ctx)
 
-		InjectSessionCookie(r.Header, id)
-		http.SetCookie(w, s.CreateCookie(id))
+			InjectSessionCookie(r.Header, id)
+			http.SetCookie(w, s.CreateCookie(id))
 
-	} else {
-		id = cookie.Value
-	}
+		} else {
+			id = cookie.Value
+		}
 
-	span.SetTag("session.id", id)
+		span.SetTag("session.id", id)
 
-	s.Next(id).ServeHTTP(w, r.WithContext(ctx))
+		if next != nil {
+			next.Handle(id).ServeHTTP(w, r.WithContext(ctx))
+		}
+	})
 }

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
+	"time"
 )
 
 func main() {
@@ -46,21 +47,33 @@ func main() {
 	defer closer.Close()
 
 
-	session := &SessionHandler{
+	locker := &RedisSemaphore{
+		Age:   10 * time.Second,
+		Count: 2,
+		Redis: NewRedisClient(),
+	}
+
+	session := &SessionMiddleware{
 		Insecure:          true,
 		Javascript:        false,
-		Next:              SeatHandler,
 		CreateSessionId:   GenerateSessionId,
 		ValidateSessionId: ParseSessionId,
 	}
 
-	http.Handle("/call/", TraceHandler(session))
+	seat := &SeatHandler{locker}
+	signal := &SignalHandler{locker}
+	ws := &WebsocketHandler{locker}
 
-	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	router := &RoutingMiddleware{
+		SessionMiddleware: session,
+		SeatHandler: seat,
+		SignalHandler: signal,
+		WebsocketHandler: ws,
+	}
 
-	log.Println("Starting websocket server on :9000")
+	http.Handle("/", TraceHandler(router))
+
+	log.Println("Starting signaling server on :9000")
 
 	err = http.ListenAndServe(":9000", nil)
 	if err != nil {

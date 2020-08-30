@@ -1,17 +1,20 @@
 package main
 
 import (
+	"fmt"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"net/http"
-	"time"
 )
 
 
+type SeatHandler struct {
+	lock Semaphore
+}
 
-func SeatHandler(session string) http.Handler {
+func (s *SeatHandler) Handle(session string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SeatHandler")
+		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SeatHandler.Handle")
 		defer span.Finish()
 
 		if r.Method != "GET" {
@@ -20,13 +23,7 @@ func SeatHandler(session string) http.Handler {
 			return
 		}
 
-		sem := &RedisSemaphore{
-			Age:   10 * time.Second,
-			Count: 2,
-			Redis: NewRedisClient(),
-		}
-
-		acq, err := sem.Acquire(ctx, "test", session)
+		acq, err := s.lock.Acquire(ctx, "test", session)
 
 		if err != nil {
 			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
@@ -39,5 +36,31 @@ func SeatHandler(session string) http.Handler {
 		}
 
 		w.WriteHeader(http.StatusOK)
+	})
+}
+
+type SignalHandler struct {
+	lock Semaphore
+}
+
+func (s *SignalHandler) Handle(session string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		span, _ := opentracing.StartSpanFromContext(r.Context(), "SignalHandler.Handle")
+		defer span.Finish()
+		msg := fmt.Sprintf("SignalHandler: %s\n", session)
+		_, _ = w.Write([]byte(msg))
+	})
+}
+
+type WebsocketHandler struct {
+	lock Semaphore
+}
+
+func (w *WebsocketHandler) Handle(session string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		span, _ := opentracing.StartSpanFromContext(r.Context(), "WebsocketHandler.Handle")
+		defer span.Finish()
+		msg := fmt.Sprintf("WebsocketHandler: %s\n", session)
+		_, _ = w.Write([]byte(msg))
 	})
 }
