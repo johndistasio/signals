@@ -54,30 +54,6 @@ func main() {
 
 	rdb := NewRedisClient()
 
-	locker := &RedisSemaphore{
-		Age:   10 * time.Minute,
-		Count: 2,
-		Redis: rdb,
-	}
-
-	session := &SessionHandler{
-		Insecure:          true,
-		Javascript:        false,
-		CreateSessionId:   GenerateSessionId,
-		ValidateSessionId: ParseSessionId,
-	}
-
-	seat := &SeatHandler{locker}
-	signal := &SignalHandler{locker, rdb}
-	ws := &WebsocketHandler{locker, rdb}
-
-	app := &App{
-		SessionMiddleware: session,
-		SeatHandler:       seat,
-		SignalHandler:     signal,
-		WebsocketHandler:  ws,
-	}
-
 	http.Handle("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s, err := rdb.Ping(context.Background()).Result()
 
@@ -93,6 +69,33 @@ func main() {
 			return
 		}
 	}))
+
+	locker := &RedisSemaphore{
+		Age:   10 * time.Minute,
+		Count: 2,
+		Redis: rdb,
+	}
+
+	session := &SessionHandler{
+		Insecure:          true,
+		Javascript:        false,
+		CreateSessionId:   GenerateSessionId,
+		ValidateSessionId: ParseSessionId,
+	}
+
+	seat := &SeatHandler{locker}
+	signal := &SignalHandler{locker, rdb}
+	ws := &WebsocketHandler{
+		lock: locker,
+		redis: rdb,
+	}
+
+	app := &App{
+		SessionMiddleware: session,
+		SeatHandler:       seat,
+		SignalHandler:     signal,
+		WebsocketHandler:  ws,
+	}
 
 	http.Handle("/", app)
 
