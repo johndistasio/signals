@@ -2,30 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"github.com/segmentio/ksuid"
 	"net/http"
 	"regexp"
 )
-
-var ErrSessionBackend = errors.New("session backend gone")
-
-var ErrSessionExists = errors.New("duplicate session ID")
-
-var ErrSessionId = errors.New("failed to generate new session ID")
-
-var ErrSessionInvalid = errors.New("invalid session ID")
-
-var ErrSessionUnknown = errors.New("unknown session ID")
-
-type OldSession interface {
-	ID() string
-	Create(ctx context.Context) error
-	Renew(ctx context.Context) error
-	Expire(ctx context.Context) error
-}
 
 func GenerateSessionId(ctx context.Context) string {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "GenerateSessionId")
