@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
@@ -115,7 +116,7 @@ func (s *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 type Signal struct {
 	PeerId  string
-	Call    string
+	CallId  string
 	Message string
 }
 
@@ -203,7 +204,7 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 
 		signal := Signal{
 			PeerId:  session,
-			Call:    call,
+			CallId:  call,
 			Message: string(body),
 		}
 
@@ -228,7 +229,6 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 type WebsocketHandler struct {
 	lock  Semaphore
 	redis Redis
-	conn  *websocket.Conn
 }
 
 var upgrader = websocket.Upgrader{}
@@ -257,9 +257,6 @@ func (wh *WebsocketHandler) Handle(session string, call string) http.Handler {
 
 		// Unwrap the ResponseWriter because AppResponseWriter doesn't implement http.Hijacker.
 		conn, err := upgrader.Upgrade(w.(*AppResponseWriter).ResponseWriter, r, nil)
-		defer conn.Close()
-
-		wh.conn = conn
 
 		if err != nil {
 			// Need to set this manually because we have to use http.ResponseWriter directly.
@@ -269,76 +266,90 @@ func (wh *WebsocketHandler) Handle(session string, call string) http.Handler {
 		}
 
 		pubsub := wh.redis.Subscribe(ctx, ChannelKeyPrefix+call)
-		defer pubsub.Close()
-		ch := pubsub.Channel()
 
-		// TODO make this configurable
-		checker := time.NewTicker(30 * time.Second)
-		defer checker.Stop()
-
-		for {
-			select {
-			case <-checker.C:
-				held, err := wh.lock.Check(ctx, CallKeyPrefix+call, session)
-
-				if err != nil || !held {
-					// TODO return an error to the client
-					return
-				}
-			case remote, ok := <-ch:
-				if !ok {
-					// TODO return an error to the client
-					ext.LogError(span, errors.New("pubsub backend gone"))
-					return
-				}
-
-				var signal Signal
-
-				err := json.Unmarshal([]byte(remote.Payload), &signal)
-
-				if err != nil {
-					ext.LogError(span, err)
-					return
-				}
-
-				if signal.Call != call {
-					ext.LogError(span, errors.Errorf("received unexpected signal for call %s", signal.Call))
-					return
-				}
-
-				if signal.PeerId == session {
-					continue
-				}
-
-				msg := EndUserMessage{
-					Message: signal.Message,
-				}
-
-				err = wh.writeToSocket(ctx, msg)
-
-				if err != nil {
-					return
-				}
-			}
-		}
+		go wh.loop(call, session, conn, pubsub)
 	})
 }
 
-func (wh *WebsocketHandler) writeToSocket(ctx context.Context, m EndUserMessage) error {
-	span, ctx := opentracing.StartSpanFromContext(ctx, "WebsocketHandler.writeToSocket")
-	defer span.Finish()
+func (wh *WebsocketHandler) loop(call string, session string, conn *websocket.Conn, pubsub *redis.PubSub) {
+	defer conn.Close()
+	defer pubsub.Close()
 
-	b, err := json.Marshal(m)
+	ch := pubsub.Channel()
 
-	if err != nil {
-		return err
+	// TODO make this configurable
+	checker := time.NewTicker(30 * time.Second)
+	defer checker.Stop()
+
+	for {
+		select {
+		case <-checker.C:
+			span, ctx := opentracing.StartSpanFromContext(context.Background(), "WebsocketHandler.loop.checkSeat")
+			span.SetTag("session.id", session)
+
+			held, err := wh.lock.Check(ctx, CallKeyPrefix+call, session)
+
+			if err != nil || !held {
+				// TODO return an error to the client
+				span.Finish()
+				return
+			}
+
+			span.Finish()
+		case remote, ok := <-ch:
+			span, _ := opentracing.StartSpanFromContext(context.Background(), "WebsocketHandler.loop.onMessage")
+			span.SetTag("session.id", session)
+
+			if !ok {
+				// TODO return an error to the client
+				ext.LogError(span, errors.New("pubsub backend gone"))
+				span.Finish()
+				return
+			}
+
+			var signal Signal
+
+			err := json.Unmarshal([]byte(remote.Payload), &signal)
+
+			if err != nil {
+				ext.LogError(span, err)
+				span.Finish()
+				return
+			}
+
+			span.SetTag("call.id", signal.CallId)
+			span.SetTag("call.peer.id", signal.PeerId)
+
+			if signal.CallId != call {
+				ext.LogError(span, errors.Errorf("received unexpected signal for call %s", signal.CallId))
+				span.Finish()
+				return
+			}
+
+			if signal.PeerId == session {
+				span.Finish()
+				continue
+			}
+
+			m := EndUserMessage{
+				Message: signal.Message,
+			}
+
+			b, err := json.Marshal(m)
+
+			if err != nil {
+				ext.LogError(span, err)
+				span.Finish()
+				return
+			}
+
+			err = conn.WriteMessage(websocket.TextMessage, b)
+
+			if err != nil {
+				ext.LogError(span, err)
+				span.Finish()
+				return
+			}
+		}
 	}
-
-	err = wh.conn.WriteMessage(websocket.TextMessage, b)
-
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
