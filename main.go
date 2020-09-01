@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
+	"regexp"
 	"time"
 )
 
@@ -78,6 +79,11 @@ func main() {
 		WebsocketHandler:  ws,
 	}
 
+	pathMatch := regexp.MustCompile(`^/(call)/([a-zA-Z0-9_\-]+)/?(.*)`)
+	pathRewrite := "/${1}/{call}/${3}"
+
+	handler := TraceHandler(pathMatch, pathRewrite, router)
+
 	http.Handle("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s, err := rdb.Ping(context.Background()).Result()
 
@@ -94,7 +100,7 @@ func main() {
 		}
 	}))
 
-	http.Handle("/", TraceHandler(router))
+	http.Handle("/", handler)
 
 	log.Println("Starting signaling server on :9000")
 

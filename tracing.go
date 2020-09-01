@@ -4,6 +4,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"net/http"
+	"regexp"
 )
 
 // TracingResponseWriter wraps the http.ResponseWriter type and stores a response code so it can be added to a trace
@@ -29,11 +30,20 @@ func (w *TracingResponseWriter) Header() http.Header {
 	return w.ResponseWriter.Header()
 }
 
-func TraceHandler(handler http.Handler) http.Handler {
+func TraceHandler(regex *regexp.Regexp, rewrite string, handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tracer := opentracing.GlobalTracer()
 		spanCtx, _ := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(r.Header))
-		span := tracer.StartSpan(r.URL.Path, ext.RPCServerOption(spanCtx))
+
+		var op string
+
+		if !regex.MatchString(r.URL.Path) {
+			op = "TraceHandler"
+		} else {
+			op = regex.ReplaceAllString(r.URL.Path, rewrite)
+		}
+
+		span := tracer.StartSpan(op, ext.RPCServerOption(spanCtx))
 		ctx := opentracing.ContextWithSpan(r.Context(), span)
 		defer span.Finish()
 
