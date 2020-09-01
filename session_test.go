@@ -27,7 +27,7 @@ func TestSameSite_Convert(t *testing.T) {
 }
 
 func TestSessionHandler_CreateCookie(t *testing.T) {
-	sh := &SessionMiddleware{}
+	sh := &SessionHandler{}
 	cookie := sh.CreateCookie("test")
 
 	assert.Equal(t, SessionCookieName, cookie.Name)
@@ -73,9 +73,9 @@ func TestInjectSessionCookie_NoCookie(t *testing.T) {
 	assert.Equal(t, expected, header["Cookie"][0])
 }
 
-// Validate that SessionMiddleware will set a session cookie on incoming requests without one.
+// Validate that SessionHandler will set a session cookie on incoming requests without one.
 func TestSessionMiddleware_Handler(t *testing.T) {
-	mw := &SessionMiddleware{
+	mw := &SessionHandler{
 		CreateSessionId: func(context.Context) string {
 			return "test"
 		},
@@ -105,9 +105,9 @@ func TestSessionMiddleware_Handler(t *testing.T) {
 
 }
 
-// Validate that SessionMiddleware will not set a new session cookie on incoming requests that provide a valid session.
+// Validate that SessionHandler will not set a new session cookie on incoming requests that provide a valid session.
 func TestSessionHandler_ServeHTTP_ExistingSession(t *testing.T) {
-	mw := &SessionMiddleware{
+	mw := &SessionHandler{
 		ValidateSessionId: func(_ context.Context, id string) bool {
 			return id == "test"
 		},
@@ -133,9 +133,9 @@ func TestSessionHandler_ServeHTTP_ExistingSession(t *testing.T) {
 	})
 }
 
-// Validate that SessionMiddleware will set a session cookie on incoming requests with an invalid session.
+// Validate that SessionHandler will set a session cookie on incoming requests with an invalid session.
 func TestSessionHandler_ServeHTTP_BadSession(t *testing.T) {
-	mw := &SessionMiddleware{
+	mw := &SessionHandler{
 		CreateSessionId: func(context.Context) string {
 			return "test"
 		},

@@ -113,8 +113,8 @@ func (s SameSite) Convert() http.SameSite {
 	}
 }
 
-// SessionMiddleware is HTTP middleware that manages session cookies on incoming requests.
-type SessionMiddleware struct {
+// SessionHandler is HTTP middleware that manages session cookies on incoming requests.
+type SessionHandler struct {
 	// CreateSessionId is a function that generates a new session ID.
 	CreateSessionId func(context.Context) string
 
@@ -153,8 +153,8 @@ func InjectSessionCookie(h http.Header, id string) {
 	}
 }
 
-// CreateCookie generates an *http.Cookie configured per SessionMiddleware's cookie settings.
-func (s *SessionMiddleware) CreateCookie(value string) *http.Cookie {
+// CreateCookie generates an *http.Cookie configured per SessionHandler's cookie settings.
+func (s *SessionHandler) CreateCookie(value string) *http.Cookie {
 	return &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    value,
@@ -166,9 +166,9 @@ func (s *SessionMiddleware) CreateCookie(value string) *http.Cookie {
 	}
 }
 
-func (s *SessionMiddleware) Handle(call string, next AppHandler) http.Handler {
+func (s *SessionHandler) Handle(call string, next AppHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SessionMiddleware.Handle")
+		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SessionHandler.Handle")
 		defer span.Finish()
 
 		var id string

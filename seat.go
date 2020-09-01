@@ -99,10 +99,12 @@ func (w *WebsocketHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		// Unwrap the ResponseWriter because TracingResponseWriter doesn't implement http.Hijacker.
-		conn, err := upgrader.Upgrade(w.(*TracingResponseWriter).ResponseWriter, r, nil)
+		// Unwrap the ResponseWriter because AppResponseWriter doesn't implement http.Hijacker.
+		conn, err := upgrader.Upgrade(w.(*AppResponseWriter).ResponseWriter, r, nil)
 
 		if err != nil {
+			// Need to set this manually because we have to use http.ResponseWriter directly.
+			w.(*AppResponseWriter).SetCode(http.StatusBadRequest)
 			ext.LogError(span, err)
 			return
 		}

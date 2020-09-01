@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
-	"regexp"
 	"time"
 )
 
@@ -61,7 +60,7 @@ func main() {
 		Redis: rdb,
 	}
 
-	session := &SessionMiddleware{
+	session := &SessionHandler{
 		Insecure:          true,
 		Javascript:        false,
 		CreateSessionId:   GenerateSessionId,
@@ -72,17 +71,12 @@ func main() {
 	signal := &SignalHandler{locker, rdb}
 	ws := &WebsocketHandler{locker}
 
-	router := &RoutingMiddleware{
+	app := &App{
 		SessionMiddleware: session,
 		SeatHandler:       seat,
 		SignalHandler:     signal,
 		WebsocketHandler:  ws,
 	}
-
-	pathMatch := regexp.MustCompile(`^/(call)/([a-zA-Z0-9_\-]+)/?(.*)`)
-	pathRewrite := "/${1}/{call}/${3}"
-
-	handler := TraceHandler(pathMatch, pathRewrite, router)
 
 	http.Handle("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s, err := rdb.Ping(context.Background()).Result()
@@ -100,7 +94,7 @@ func main() {
 		}
 	}))
 
-	http.Handle("/", handler)
+	http.Handle("/", app)
 
 	log.Println("Starting signaling server on :9000")
 
