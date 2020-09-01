@@ -19,7 +19,6 @@ func (s *SeatHandler) Handle(session string, call string) http.Handler {
 		defer span.Finish()
 
 		if r.Method != "GET" {
-			ext.HTTPStatusCode.Set(span, http.StatusMethodNotAllowed)
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
@@ -45,10 +44,25 @@ type SignalHandler struct {
 	redis Redis
 }
 
+const ChannelKeyPrefix = "channel:"
+
+
 func (s *SignalHandler) Handle(session string, call string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SignalHandler.Handle")
 		defer span.Finish()
+
+		if r.Method != "POST" {
+			// TODO implement this
+			//w.WriteHeader(http.StatusMethodNotAllowed)
+			//return
+		}
+
+		if r.Header["Content-Type"][0] != "application/json" {
+			// TODO implement this
+			//w.WriteHeader(http.StatusBadRequest)
+			//return
+		}
 
 		acq, err := s.lock.Acquire(ctx, CallKeyPrefix+call,session)
 
@@ -62,7 +76,9 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
+
 		// TODO publish to redis
+		//s.redis.Publish(ctx, ChannelKeyPrefix+call, "signal").Result()
 
 	})
 }
@@ -77,6 +93,11 @@ func (w *WebsocketHandler) Handle(session string, call string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, _ := opentracing.StartSpanFromContext(r.Context(), "WebsocketHandler.Handle")
 		defer span.Finish()
+
+		if r.Method != "GET" {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 
 		// Unwrap the ResponseWriter because TracingResponseWriter doesn't implement http.Hijacker.
 		conn, err := upgrader.Upgrade(w.(*TracingResponseWriter).ResponseWriter, r, nil)

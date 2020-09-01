@@ -88,7 +88,7 @@ func main() {
 		}
 
 		if s != "PONG" {
-			log.Printf("unexpected response from redis: %v\n", s)
+			log.Printf("error: unexpected response from redis: %v\n", s)
 			http.Error(w, "unhealthy", http.StatusInternalServerError)
 			return
 		}
