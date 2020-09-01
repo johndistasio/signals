@@ -8,7 +8,7 @@ require (
 	github.com/go-redis/redis/v8 v8.0.0-beta.7
 	github.com/gorilla/websocket v1.4.2
 	github.com/opentracing/opentracing-go v1.2.0
-	github.com/pkg/errors v0.9.1 // indirect
+	github.com/pkg/errors v0.9.1
 	github.com/segmentio/ksuid v1.0.3
 	github.com/stretchr/testify v1.6.1
 	github.com/uber/jaeger-client-go v2.25.0+incompatible

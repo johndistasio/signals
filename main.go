@@ -55,7 +55,7 @@ func main() {
 	rdb := NewRedisClient()
 
 	locker := &RedisSemaphore{
-		Age:   10 * time.Second,
+		Age:   10 * time.Minute,
 		Count: 2,
 		Redis: rdb,
 	}
@@ -69,7 +69,7 @@ func main() {
 
 	seat := &SeatHandler{locker}
 	signal := &SignalHandler{locker, rdb}
-	ws := &WebsocketHandler{locker}
+	ws := &WebsocketHandler{locker, rdb}
 
 	app := &App{
 		SessionMiddleware: session,

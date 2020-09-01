@@ -12,6 +12,7 @@ var ErrSemaphoreGone = errors.New("semaphore backend gone")
 
 type Semaphore interface {
 	Acquire(ctx context.Context, name string, id string) (bool, error)
+	Check(ctx context.Context, name string, id string) (bool, error)
 	Release(ctx context.Context, name, id string) error
 }
 
@@ -47,6 +48,33 @@ func (r *RedisSemaphore) Acquire(ctx context.Context, name string, id string) (b
 	thenEpoch := then.Unix()
 
 	acq, err := acquireScript.Eval(ctx, r.Redis, []string{name}, thenEpoch, r.Count, nowEpoch, id).Result()
+
+	if err != nil {
+		ext.LogError(span, err)
+		return false, ErrSemaphoreGone
+	}
+
+	return acq == int64(1), nil
+}
+
+// TODO document arguments
+var checkScript = NewScript(`
+	redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+
+    if redis.call('ZSCORE', KEYS[1], ARGV[2]) then
+		return 1
+	else
+		return 0
+	end
+`)
+
+func (r *RedisSemaphore) Check(ctx context.Context, name string, id string) (bool, error) {
+	span, ctx := opentracing.StartSpanFromContext(ctx, "RedisSemaphore.Check")
+	defer span.Finish()
+
+	thenEpoch := time.Now().Add(-r.Age).Unix()
+
+	acq, err := checkScript.Eval(ctx, r.Redis, []string{name}, thenEpoch, id).Result()
 
 	if err != nil {
 		ext.LogError(span, err)

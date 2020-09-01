@@ -42,11 +42,6 @@ type SignalRelay struct {
 	closeWriter chan struct{}
 }
 
-type Signal struct {
-	PeerId  string
-	Message string
-}
-
 func StartSignalRelay(ctx context.Context, session OldSession, rdb Redis, conn *websocket.Conn, opts *SignalRelayOptions) error {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "StartSignalRelay")
 	defer span.Finish()
@@ -195,7 +190,7 @@ func (r *SignalRelay) ReadSignal(ctx context.Context) {
 				return
 			}
 
-			msg, err := json.Marshal(Signal{r.session.ID(), string(message)})
+			msg, err := json.Marshal(Signal{r.session.ID(), "call", string(message)})
 
 			if err != nil {
 				log.Printf("%s: error on serializing message: %v\n", r.session.ID(), err)
