@@ -241,8 +241,13 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 }
 
 type WebsocketHandler struct {
-	lock  Semaphore
-	redis Redis
+	call     string
+	session  string
+	pubsub   *redis.PubSub
+	conn     *websocket.Conn
+	lock     Semaphore
+	redis    Redis
+	stopChan chan int
 }
 
 var upgrader = websocket.Upgrader{}
@@ -251,6 +256,10 @@ func (wh *WebsocketHandler) Handle(session string, call string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, ctx := opentracing.StartSpanFromContext(r.Context(), "WebsocketHandler.Handle")
 		defer span.Finish()
+
+		wh.stopChan = make(chan int)
+		wh.session = session
+		wh.call = call
 
 		if r.Method != "GET" {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -271,6 +280,7 @@ func (wh *WebsocketHandler) Handle(session string, call string) http.Handler {
 
 		// Unwrap the ResponseWriter because AppResponseWriter doesn't implement http.Hijacker.
 		conn, err := upgrader.Upgrade(w.(*AppResponseWriter).ResponseWriter, r, nil)
+		wh.conn = conn
 
 		if err != nil {
 			// Need to set this manually because we have to use http.ResponseWriter directly.
@@ -279,76 +289,60 @@ func (wh *WebsocketHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		pubsub := wh.redis.Subscribe(ctx, ChannelKeyPrefix+call)
+		conn.SetCloseHandler(func(code int, text string) error {
+			close(wh.stopChan)
+			message := websocket.FormatCloseMessage(code, "")
+			conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
+			return nil
+		})
 
-		conn.SetCloseHandler(wh.closeHandler(session, call, conn))
+		pubsub := wh.redis.Subscribe(ctx, ChannelKeyPrefix+call)
+		_, err = pubsub.Receive(ctx)
+
+		if err != nil {
+			ext.LogError(span, err)
+			http.Error(w, "pubsub backend unavailable", http.StatusInternalServerError)
+			return
+		}
+
+		wh.pubsub = pubsub
 
 		// Ensure control messages are processed.
 		go func() {
 			for {
 				if _, _, err := conn.NextReader(); err != nil {
 					_ = conn.Close()
-					break
+					return
 				}
 			}
 		}()
 
-		go wh.loop(session, call, conn, pubsub)
+		go wh.loop()
 	})
 }
 
-func (wh *WebsocketHandler) closeHandler(session string, call string, conn *websocket.Conn) func (int, string) error {
-	return func (code int, text string) error {
-		span, ctx := opentracing.StartSpanFromContext(context.Background(), "WebsocketHandler.closeHandler")
-		defer span.Finish()
+func (wh *WebsocketHandler) onMessage() {
 
-		span.SetTag("call.id", call)
-		span.SetTag("session.id", session)
-
-		message := websocket.FormatCloseMessage(code, "")
-		_ = conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1 * time.Second))
-
-		err := wh.lock.Release(ctx, call, session)
-
-		if err != nil {
-			ext.LogError(span, err)
-		}
-
-		return nil
-	}
 }
 
-func (wh *WebsocketHandler) loop(session string, call string, conn *websocket.Conn, pubsub *redis.PubSub) {
-	defer conn.Close()
-	defer pubsub.Close()
+func (wh *WebsocketHandler) loop() {
+	defer wh.conn.Close()
+	defer wh.pubsub.Close()
 
-	ch := pubsub.Channel()
-
-	// TODO make this configurable
-	checker := time.NewTicker(30 * time.Second)
-	defer checker.Stop()
+	ch := wh.pubsub.Channel()
 
 	for {
 		select {
-		case <-checker.C:
-			span, ctx := opentracing.StartSpanFromContext(context.Background(), "WebsocketHandler.loop.checkSeat")
-			span.SetTag("session.id", session)
-
-			held, err := wh.lock.Check(ctx, CallKeyPrefix+call, session)
-
-			if err != nil || !held {
-				// TODO return an error to the client
-				span.Finish()
+		case _, closed := <-wh.stopChan:
+			if !closed {
 				return
 			}
-
-			span.Finish()
 		case remote, ok := <-ch:
-			span, _ := opentracing.StartSpanFromContext(context.Background(), "WebsocketHandler.loop.onMessage")
-			span.SetTag("session.id", session)
+			span, _ := opentracing.StartSpanFromContext(context.Background(), "WebsocketHandler.loop")
+			span.SetTag("call.id", wh.call)
+			span.SetTag("session.id", wh.session)
 
 			if !ok {
-				// TODO return an error to the client
 				ext.LogError(span, errors.New("pubsub backend gone"))
 				span.Finish()
 				return
@@ -364,16 +358,15 @@ func (wh *WebsocketHandler) loop(session string, call string, conn *websocket.Co
 				return
 			}
 
-			span.SetTag("call.id", signal.CallId)
 			span.SetTag("call.peer.id", signal.PeerId)
 
-			if signal.CallId != call {
+			if signal.CallId != wh.call {
 				ext.LogError(span, errors.Errorf("received unexpected signal for call %s", signal.CallId))
 				span.Finish()
 				return
 			}
 
-			if signal.PeerId == session {
+			if signal.PeerId == wh.session {
 				span.Finish()
 				continue
 			}
@@ -390,13 +383,14 @@ func (wh *WebsocketHandler) loop(session string, call string, conn *websocket.Co
 				return
 			}
 
-			err = conn.WriteMessage(websocket.TextMessage, b)
+			err = wh.conn.WriteMessage(websocket.TextMessage, b)
 
 			if err != nil {
-				// We don't error here because socket closure is inevitable, esp. for clients with poor internet.
+				ext.LogError(span, err)
 				span.Finish()
 				return
 			}
+
 		}
 	}
 }
