@@ -202,13 +202,27 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
+		if len(body) < 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		var input EndUserMessage
+
+		err = json.Unmarshal(body, &input)
+
+		if err != nil || input.Message == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
 		signal := Signal{
 			PeerId:  session,
 			CallId:  call,
-			Message: string(body),
+			Message: input.Message,
 		}
 
-		msg, err := json.Marshal(signal)
+		encoded, err := json.Marshal(signal)
 
 		if err != nil {
 			ext.LogError(span, err)
@@ -216,7 +230,7 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		err = s.redis.Publish(ctx, ChannelKeyPrefix+call, msg).Err()
+		err = s.redis.Publish(ctx, ChannelKeyPrefix+call, encoded).Err()
 
 		if err != nil {
 			ext.LogError(span, err)
