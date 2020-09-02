@@ -281,11 +281,44 @@ func (wh *WebsocketHandler) Handle(session string, call string) http.Handler {
 
 		pubsub := wh.redis.Subscribe(ctx, ChannelKeyPrefix+call)
 
-		go wh.loop(call, session, conn, pubsub)
+		conn.SetCloseHandler(wh.closeHandler(session, call, conn))
+
+		// Ensure control messages are processed.
+		go func() {
+			for {
+				if _, _, err := conn.NextReader(); err != nil {
+					_ = conn.Close()
+					break
+				}
+			}
+		}()
+
+		go wh.loop(session, call, conn, pubsub)
 	})
 }
 
-func (wh *WebsocketHandler) loop(call string, session string, conn *websocket.Conn, pubsub *redis.PubSub) {
+func (wh *WebsocketHandler) closeHandler(session string, call string, conn *websocket.Conn) func (int, string) error {
+	return func (code int, text string) error {
+		span, ctx := opentracing.StartSpanFromContext(context.Background(), "WebsocketHandler.closeHandler")
+		defer span.Finish()
+
+		span.SetTag("call.id", call)
+		span.SetTag("session.id", session)
+
+		message := websocket.FormatCloseMessage(code, "")
+		_ = conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1 * time.Second))
+
+		err := wh.lock.Release(ctx, call, session)
+
+		if err != nil {
+			ext.LogError(span, err)
+		}
+
+		return nil
+	}
+}
+
+func (wh *WebsocketHandler) loop(session string, call string, conn *websocket.Conn, pubsub *redis.PubSub) {
 	defer conn.Close()
 	defer pubsub.Close()
 
@@ -360,7 +393,7 @@ func (wh *WebsocketHandler) loop(call string, session string, conn *websocket.Co
 			err = conn.WriteMessage(websocket.TextMessage, b)
 
 			if err != nil {
-				ext.LogError(span, err)
+				// We don't error here because socket closure is inevitable, esp. for clients with poor internet.
 				span.Finish()
 				return
 			}
