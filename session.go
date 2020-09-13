@@ -135,7 +135,7 @@ func InjectSessionCookie(h http.Header, id string) {
 	}
 }
 
-// CreateCookie generates an *http.Cookie configured per SessionHandler's cookie settings.
+// CreateCookie generates an *http.Cookie configured per the SessionHandler's cookie settings.
 func (s *SessionHandler) CreateCookie(value string) *http.Cookie {
 	return &http.Cookie{
 		Name:     SessionCookieName,

@@ -48,24 +48,24 @@ func (w *AppResponseWriter) Header() http.Header {
 }
 
 type App struct {
-	SessionMiddleware *SessionHandler
-	SeatHandler       AppHandler
-	SignalHandler     AppHandler
-	WebsocketHandler  AppHandler
+	SessionHandler   *SessionHandler
+	SeatHandler      AppHandler
+	SignalHandler    AppHandler
+	WebsocketHandler AppHandler
 }
 
 var pathMatch = regexp.MustCompile(`^/call/([a-zA-Z0-9_\-]+)(/?.*)`)
 var pathRewrite = "/call/{call}${2}"
 
 func SplitPath(path string) (string, string, string) {
-	matches := strings.Split(strings.TrimPrefix(strings.TrimSuffix(path, "/"), "/"), "/")
+	segments := strings.Split(strings.TrimPrefix(strings.TrimSuffix(path, "/"), "/"), "/")
 
-	if len(matches) == 2 {
-		return matches[0], matches[1], ""
+	if len(segments) == 2 {
+		return segments[0], segments[1], ""
 	}
 
-	if len(matches) == 3 {
-		return matches[0], matches[1], matches[2]
+	if len(segments) == 3 {
+		return segments[0], segments[1], segments[2]
 	}
 
 	return "", "", ""
@@ -97,31 +97,19 @@ func (s *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		handler = s.WebsocketHandler
 		break
 	default:
-		// TODO differentiate between "unknown path" and "unknown operation" error scenarios
 		ext.HTTPStatusCode.Set(span, http.StatusNotFound)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
 	span.SetTag("call.id", call)
-	span.SetOperationName(pathMatch.ReplaceAllString(r.URL.Path, pathRewrite))
+	span.SetOperationName(r.Method + " " + pathMatch.ReplaceAllString(r.URL.Path, pathRewrite))
 
 	arw := &AppResponseWriter{w, 0}
 
-	s.SessionMiddleware.Handle(call, handler).ServeHTTP(arw, r.WithContext(ctx))
+	s.SessionHandler.Handle(call, handler).ServeHTTP(arw, r.WithContext(ctx))
 
 	ext.HTTPStatusCode.Set(span, uint16(arw.code))
-}
-
-type Signal struct {
-	PeerId  string
-	CallId  string
-	Message string
-}
-
-type EndUserMessage struct {
-	Error   bool
-	Message string
 }
 
 type SeatHandler struct {
@@ -155,6 +143,18 @@ func (s *SeatHandler) Handle(session string, call string) http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 }
+
+type Signal struct {
+	PeerId  string
+	CallId  string
+	Message string
+}
+
+type EndUserMessage struct {
+	Error   bool
+	Message string
+}
+
 
 type SignalHandler struct {
 	lock  Semaphore
@@ -325,7 +325,7 @@ func (wh *WebsocketHandler) onMessage() {
 }
 
 func (wh *WebsocketHandler) loop() {
-	defer func () {
+	defer func() {
 		_ = wh.conn.Close()
 		_ = wh.pubsub.Close()
 	}()

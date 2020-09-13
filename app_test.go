@@ -83,31 +83,17 @@ func (suite *SeatHandlerTestSuite) TestHandleConflict() {
 	suite.Equal(http.StatusConflict, r.StatusCode)
 }
 
-func (suite *SeatHandlerTestSuite) TestPOST() {
+func (suite *SeatHandlerTestSuite) TestMethodNotAllowed() {
 	suite.mockLock.Return(true, nil)
 
-	req, _ := http.NewRequest("POST", suite.server.URL, nil)
-	res, _ := (&http.Client{}).Do(req)
+	methods := []string{"CONNECT", "DELETE", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE"}
 
-	suite.Equal(http.StatusMethodNotAllowed, res.StatusCode)
-}
+	for _, method := range methods {
+		req, _ := http.NewRequest(method, suite.server.URL, nil)
+		res, _ := (&http.Client{}).Do(req)
 
-func (suite *SeatHandlerTestSuite) TestPUT() {
-	suite.mockLock.Return(true, nil)
-
-	req, _ := http.NewRequest("PUT", suite.server.URL, nil)
-	res, _ := (&http.Client{}).Do(req)
-
-	suite.Equal(http.StatusMethodNotAllowed, res.StatusCode)
-}
-
-func (suite *SeatHandlerTestSuite) TestDELETE() {
-	suite.mockLock.Return(true, nil)
-
-	req, _ := http.NewRequest("DELETE", suite.server.URL, nil)
-	res, _ := (&http.Client{}).Do(req)
-
-	suite.Equal(http.StatusMethodNotAllowed, res.StatusCode)
+		suite.Equal(http.StatusMethodNotAllowed, res.StatusCode)
+	}
 }
 
 type SignalHandlerTestSuite struct {
@@ -148,7 +134,6 @@ func (suite *SignalHandlerTestSuite) TestHandle() {
 
 	suite.Equal(http.StatusOK, res.StatusCode)
 }
-
 
 func (suite *SignalHandlerTestSuite) TestHandleConflict() {
 	suite.mockLock.Return(false, nil)
@@ -203,31 +188,15 @@ func (suite *SignalHandlerTestSuite) TestWrongContentType() {
 	suite.Equal(http.StatusBadRequest, res.StatusCode)
 }
 
-func (suite *SignalHandlerTestSuite) TestGET() {
+func (suite *SignalHandlerTestSuite) TestMethodNotAllowed() {
 	suite.mockLock.Return(true, nil)
-	suite.mockRedis.Return(redis.NewIntCmd(context.Background(), 1))
 
-	r, _ := http.Get(suite.server.URL)
+	methods := []string{"CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "PUT", "TRACE"}
 
-	suite.Equal(http.StatusMethodNotAllowed, r.StatusCode)
-}
+	for _, method := range methods {
+		req, _ := http.NewRequest(method, suite.server.URL, nil)
+		res, _ := (&http.Client{}).Do(req)
 
-func (suite *SignalHandlerTestSuite) TestPUT() {
-	suite.mockLock.Return(true, nil)
-	suite.mockRedis.Return(redis.NewIntCmd(context.Background(), 1))
-
-	req, _ := http.NewRequest("PUT", suite.server.URL, nil)
-	res, _ := (&http.Client{}).Do(req)
-
-	suite.Equal(http.StatusMethodNotAllowed, res.StatusCode)
-}
-
-func (suite *SignalHandlerTestSuite) TestDELETE() {
-	suite.mockLock.Return(true, nil)
-	suite.mockRedis.Return(redis.NewIntCmd(context.Background(), 1))
-
-	req, _ := http.NewRequest("DELETE", suite.server.URL, nil)
-	res, _ := (&http.Client{}).Do(req)
-
-	suite.Equal(http.StatusMethodNotAllowed, res.StatusCode)
+		suite.Equal(http.StatusMethodNotAllowed, res.StatusCode)
+	}
 }

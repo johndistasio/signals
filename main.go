@@ -86,15 +86,15 @@ func main() {
 	seat := &SeatHandler{locker}
 	signal := &SignalHandler{locker, rdb}
 	ws := &WebsocketHandler{
-		lock: locker,
+		lock:  locker,
 		redis: rdb,
 	}
 
 	app := &App{
-		SessionMiddleware: session,
-		SeatHandler:       seat,
-		SignalHandler:     signal,
-		WebsocketHandler:  ws,
+		SessionHandler:   session,
+		SeatHandler:      seat,
+		SignalHandler:    signal,
+		WebsocketHandler: ws,
 	}
 
 	http.Handle("/", app)
