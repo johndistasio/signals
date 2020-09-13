@@ -82,21 +82,22 @@ func (s *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ext.HTTPMethod.Set(span, r.Method)
 	ext.PeerAddress.Set(span, r.RemoteAddr)
 
-	head, call, op := SplitPath(r.URL.Path)
+	path, call, op := SplitPath(r.URL.Path)
 
-	var h AppHandler
+	var handler AppHandler
 
 	switch {
-	case head == "call" && call != "" && op == "":
-		h = s.SeatHandler
+	case path == "call" && call != "" && op == "":
+		handler = s.SeatHandler
 		break
-	case head == "call" && call != "" && op == "signal":
-		h = s.SignalHandler
+	case path == "call" && call != "" && op == "signal":
+		handler = s.SignalHandler
 		break
-	case head == "call" && call != "" && op == "ws":
-		h = s.WebsocketHandler
+	case path == "call" && call != "" && op == "ws":
+		handler = s.WebsocketHandler
 		break
 	default:
+		// TODO differentiate between "unknown path" and "unknown operation" error scenarios
 		ext.HTTPStatusCode.Set(span, http.StatusNotFound)
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -107,11 +108,9 @@ func (s *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	arw := &AppResponseWriter{w, 0}
 
-	s.SessionMiddleware.Handle(call, h).ServeHTTP(arw, r.WithContext(ctx))
+	s.SessionMiddleware.Handle(call, handler).ServeHTTP(arw, r.WithContext(ctx))
 
-	if arw.code != 0 {
-		ext.HTTPStatusCode.Set(span, uint16(arw.code))
-	}
+	ext.HTTPStatusCode.Set(span, uint16(arw.code))
 }
 
 type Signal struct {
@@ -292,7 +291,7 @@ func (wh *WebsocketHandler) Handle(session string, call string) http.Handler {
 		conn.SetCloseHandler(func(code int, text string) error {
 			close(wh.stopChan)
 			message := websocket.FormatCloseMessage(code, "")
-			conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
+			_ = conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
 			return nil
 		})
 
@@ -326,8 +325,10 @@ func (wh *WebsocketHandler) onMessage() {
 }
 
 func (wh *WebsocketHandler) loop() {
-	defer wh.conn.Close()
-	defer wh.pubsub.Close()
+	defer func () {
+		_ = wh.conn.Close()
+		_ = wh.pubsub.Close()
+	}()
 
 	ch := wh.pubsub.Channel()
 
