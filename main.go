@@ -76,6 +76,8 @@ func main() {
 		Redis: rdb,
 	}
 
+	publisher := &RedisPublisher{rdb}
+
 	session := &SessionHandler{
 		Insecure:          true,
 		Javascript:        false,
@@ -84,7 +86,7 @@ func main() {
 	}
 
 	seat := &SeatHandler{locker}
-	signal := &SignalHandler{locker, rdb}
+	signal := &SignalHandler{locker, publisher}
 	ws := &WebsocketHandler{
 		lock:  locker,
 		redis: rdb,

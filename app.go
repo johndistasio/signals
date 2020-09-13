@@ -82,6 +82,8 @@ func (s *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ext.HTTPMethod.Set(span, r.Method)
 	ext.PeerAddress.Set(span, r.RemoteAddr)
 
+	span.SetTag("http.content_type", r.Header["Content-Type"])
+
 	path, call, op := SplitPath(r.URL.Path)
 
 	var handler AppHandler
@@ -155,10 +157,9 @@ type EndUserMessage struct {
 	Message string
 }
 
-
 type SignalHandler struct {
-	lock  Semaphore
-	redis Redis
+	lock Semaphore
+	pub  Publisher
 }
 
 const ChannelKeyPrefix = "channel:"
@@ -229,10 +230,9 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		err = s.redis.Publish(ctx, ChannelKeyPrefix+call, encoded).Err()
+		err = s.pub.Publish(ctx, ChannelKeyPrefix+call, encoded)
 
 		if err != nil {
-			ext.LogError(span, err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}

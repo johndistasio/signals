@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"errors"
-	"github.com/go-redis/redis/v8"
 	"github.com/johndistasio/signaling/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -71,13 +69,13 @@ func (suite *SeatHandlerTestSuite) TestHandle() {
 	suite.Equal(http.StatusOK, r.StatusCode)
 }
 
-func (suite *SeatHandlerTestSuite) TestHandleError() {
+func (suite *SeatHandlerTestSuite) TestSeatError() {
 	suite.mockLock.Return(true, errors.New("test"))
 	r, _ := http.Get(suite.server.URL)
 	suite.Equal(http.StatusInternalServerError, r.StatusCode)
 }
 
-func (suite *SeatHandlerTestSuite) TestHandleConflict() {
+func (suite *SeatHandlerTestSuite) TestSeatConflict() {
 	suite.mockLock.Return(false, nil)
 	r, _ := http.Get(suite.server.URL)
 	suite.Equal(http.StatusConflict, r.StatusCode)
@@ -98,19 +96,22 @@ func (suite *SeatHandlerTestSuite) TestMethodNotAllowed() {
 
 type SignalHandlerTestSuite struct {
 	suite.Suite
-	mockLock  *mock.Call
-	mockRedis *mock.Call
-	server    *httptest.Server
+	body          *strings.Reader
+	mockLock      *mock.Call
+	mockPublisher *mock.Call
+	server        *httptest.Server
 }
 
 func (suite *SignalHandlerTestSuite) SetupTest() {
+	suite.body = strings.NewReader(`{"Message": "hello"}`)
+
 	lock := new(mocks.Semaphore)
 	suite.mockLock = lock.On("Check", mock.Anything, CallKeyPrefix+"test", "test")
 
-	rdb := new(mocks.Redis)
-	suite.mockRedis = rdb.On("Publish", mock.Anything, ChannelKeyPrefix+"test", mock.Anything)
+	pub := new(mocks.Publisher)
+	suite.mockPublisher = pub.On("Publish", mock.Anything, ChannelKeyPrefix+"test", mock.Anything)
 
-	handler := (&SignalHandler{lock: lock, redis: rdb}).Handle("test", "test")
+	handler := (&SignalHandler{lock: lock, pub: pub}).Handle("test", "test")
 
 	suite.server = httptest.NewServer(handler)
 }
@@ -125,39 +126,37 @@ func TestSignalHandlerTestSuite(t *testing.T) {
 
 func (suite *SignalHandlerTestSuite) TestHandle() {
 	suite.mockLock.Return(true, nil)
-	suite.mockRedis.Return(redis.NewIntCmd(context.Background(), 1))
+	suite.mockPublisher.Return(nil)
 
-	body := strings.NewReader(`{"Message": "hello"}`)
-	req, _ := http.NewRequest("POST", suite.server.URL, body)
+	req, _ := http.NewRequest("POST", suite.server.URL, suite.body)
 	req.Header.Add("Content-Type", "application/json")
 	res, _ := (&http.Client{}).Do(req)
 
 	suite.Equal(http.StatusOK, res.StatusCode)
 }
 
-func (suite *SignalHandlerTestSuite) TestHandleConflict() {
+func (suite *SignalHandlerTestSuite) TestSeatConflict() {
 	suite.mockLock.Return(false, nil)
 
-	req, _ := http.NewRequest("POST", suite.server.URL, nil)
+	req, _ := http.NewRequest("POST", suite.server.URL, suite.body)
 	req.Header.Add("Content-Type", "application/json")
 	res, _ := (&http.Client{}).Do(req)
 
 	suite.Equal(http.StatusConflict, res.StatusCode)
 }
 
-func (suite *SignalHandlerTestSuite) TestHandleSeatError() {
-	suite.mockLock.Return(true, errors.New("test"))
+func (suite *SignalHandlerTestSuite) TestSeatFailure() {
+	suite.mockLock.Return(false, errors.New("test"))
 
-	req, _ := http.NewRequest("POST", suite.server.URL, nil)
+	req, _ := http.NewRequest("POST", suite.server.URL, suite.body)
 	req.Header.Add("Content-Type", "application/json")
 	res, _ := (&http.Client{}).Do(req)
 
 	suite.Equal(http.StatusInternalServerError, res.StatusCode)
 }
 
-func (suite *SignalHandlerTestSuite) TestHandleBadData() {
+func (suite *SignalHandlerTestSuite) TestBadData() {
 	suite.mockLock.Return(true, nil)
-	suite.mockRedis.Return(redis.NewIntCmd(context.Background(), 1))
 
 	body := strings.NewReader(`{"wrong": "potato"}`)
 	req, _ := http.NewRequest("POST", suite.server.URL, body)
@@ -167,11 +166,21 @@ func (suite *SignalHandlerTestSuite) TestHandleBadData() {
 	suite.Equal(http.StatusBadRequest, res.StatusCode)
 }
 
-func (suite *SignalHandlerTestSuite) TestMissingContentType() {
+func (suite *SignalHandlerTestSuite) TestMissingData() {
 	suite.mockLock.Return(true, nil)
-	suite.mockRedis.Return(redis.NewIntCmd(context.Background(), 1))
+	suite.mockPublisher.Return(nil)
 
 	req, _ := http.NewRequest("POST", suite.server.URL, nil)
+	req.Header.Add("Content-Type", "application/json")
+	res, _ := (&http.Client{}).Do(req)
+
+	suite.Equal(http.StatusBadRequest, res.StatusCode)
+}
+
+func (suite *SignalHandlerTestSuite) TestMissingContentType() {
+	suite.mockLock.Return(true, nil)
+
+	req, _ := http.NewRequest("POST", suite.server.URL, suite.body)
 	res, _ := (&http.Client{}).Do(req)
 
 	suite.Equal(http.StatusBadRequest, res.StatusCode)
@@ -179,9 +188,8 @@ func (suite *SignalHandlerTestSuite) TestMissingContentType() {
 
 func (suite *SignalHandlerTestSuite) TestWrongContentType() {
 	suite.mockLock.Return(true, nil)
-	suite.mockRedis.Return(redis.NewIntCmd(context.Background(), 1))
 
-	req, _ := http.NewRequest("POST", suite.server.URL, nil)
+	req, _ := http.NewRequest("POST", suite.server.URL, suite.body)
 	req.Header.Add("Content-Type", "application/xml")
 	res, _ := (&http.Client{}).Do(req)
 
@@ -195,8 +203,20 @@ func (suite *SignalHandlerTestSuite) TestMethodNotAllowed() {
 
 	for _, method := range methods {
 		req, _ := http.NewRequest(method, suite.server.URL, nil)
+		req.Header.Add("Content-Type", "application/json")
 		res, _ := (&http.Client{}).Do(req)
 
 		suite.Equal(http.StatusMethodNotAllowed, res.StatusCode)
 	}
+}
+
+func (suite *SignalHandlerTestSuite) TestPublishFailure() {
+	suite.mockLock.Return(true, nil)
+	suite.mockPublisher.Return(ErrPublisherGone)
+
+	req, _ := http.NewRequest("POST", suite.server.URL, suite.body)
+	req.Header.Add("Content-Type", "application/json")
+	res, _ := (&http.Client{}).Do(req)
+
+	suite.Equal(http.StatusInternalServerError, res.StatusCode)
 }
