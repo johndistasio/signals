@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="go build github.com/johndistasio/signaling" type="GoApplicationRunConfiguration" factoryName="Go Application" nameIsGenerated="true">
+  <configuration default="true" name="go build github.com/johndistasio/signaling" type="GoApplicationRunConfiguration" factoryName="Go Application" nameIsGenerated="true">
     <module name="signaling" />
     <working_directory value="$PROJECT_DIR$" />
     <kind value="PACKAGE" />

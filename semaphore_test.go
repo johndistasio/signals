@@ -4,81 +4,117 @@ import (
 	"context"
 	"github.com/go-redis/redis/v8"
 	"github.com/johndistasio/signaling/mocks"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
 	"io"
 	"testing"
 )
 
-func TestRedisSemaphore_Acquire(t *testing.T) {
-	result := redis.NewCmdResult(int64(1), nil)
+const RedisSemaphoreTestKey = "testKey"
 
-	rdb := new(mocks.Redis)
+const RedisSemaphoreTestId = "testId"
 
-	rdb.On("Eval", mock.Anything, mock.Anything, []string{"testKey"}, mock.Anything).Return(result)
-
-	sem := &RedisSemaphore{Redis: rdb}
-
-	acq, err := sem.Acquire(context.Background(), "testKey", "testId")
-
-	assert.True(t, acq)
-	assert.Nil(t, err)
+type RedisSemaphoreTestSuite struct {
+	suite.Suite
+	mockRedisEval *mock.Call
+	mockRedisZRem *mock.Call
+	sem           *RedisSemaphore
 }
 
-func TestRedisSemaphore_Acquire_Failure(t *testing.T) {
-	result := redis.NewCmdResult(int64(0), nil)
-
+func (suite *RedisSemaphoreTestSuite) SetupTest() {
 	rdb := new(mocks.Redis)
-
-	rdb.On("Eval", mock.Anything, mock.Anything, []string{"testKey"}, mock.Anything).Return(result)
-
-	sem := &RedisSemaphore{Redis: rdb}
-
-	acq, err := sem.Acquire(context.Background(), "testKey", "testId")
-
-	assert.False(t, acq)
-	assert.Nil(t, err)
+	suite.sem = &RedisSemaphore{Redis: rdb}
+	suite.mockRedisEval = rdb.On("Eval", mock.Anything, mock.Anything, []string{RedisSemaphoreTestKey}, mock.Anything)
+	suite.mockRedisZRem = rdb.On("ZRem", mock.Anything, RedisSemaphoreTestKey, []interface{}{RedisSemaphoreTestId})
 }
 
-func TestRedisSemaphore_Acquire_Error(t *testing.T) {
-	result := redis.NewCmdResult(int64(0), io.EOF)
-
-	rdb := new(mocks.Redis)
-
-	rdb.On("Eval", mock.Anything, mock.Anything, []string{"testKey"}, mock.Anything).Return(result)
-
-	sem := &RedisSemaphore{Redis: rdb}
-
-	acq, err := sem.Acquire(context.Background(), "testKey", "testId")
-
-	assert.False(t, acq)
-	assert.Equal(t, ErrSemaphoreGone, err)
+func TestRedisSemaphoreTestSuite(t *testing.T) {
+	suite.Run(t, new(RedisSemaphoreTestSuite))
 }
 
-func TestRedisSemaphore_Release(t *testing.T) {
-	result := redis.NewIntResult(1, nil)
+func (suite *RedisSemaphoreTestSuite) TestAcquire() {
+	suite.mockRedisEval.Return(redis.NewCmdResult(int64(1), nil))
 
-	rdb := new(mocks.Redis)
+	acq, err := suite.sem.Acquire(context.Background(), RedisSemaphoreTestKey, RedisSemaphoreTestId)
 
-	rdb.On("ZRem", mock.Anything, "testKey", []interface{}{"testId"}).Return(result)
-
-	sem := &RedisSemaphore{Redis: rdb}
-
-	err := sem.Release(context.Background(), "testKey", "testId")
-
-	assert.Nil(t, err)
+	suite.True(acq)
+	suite.Nil(err)
 }
 
-func TestRedisSemaphore_Release_Error(t *testing.T) {
-	result := redis.NewIntResult(0, io.EOF)
+func (suite *RedisSemaphoreTestSuite) TestAcquire_Failure() {
+	suite.mockRedisEval.Return(redis.NewCmdResult(int64(0), nil))
 
-	rdb := new(mocks.Redis)
+	acq, err := suite.sem.Acquire(context.Background(), RedisSemaphoreTestKey, RedisSemaphoreTestId)
 
-	rdb.On("ZRem", mock.Anything, "testKey", []interface{}{"testId"}).Return(result)
+	suite.False(acq)
+	suite.Nil(err)
+}
 
-	sem := &RedisSemaphore{Redis: rdb}
+func (suite *RedisSemaphoreTestSuite) TestAcquire_Error() {
+	suite.mockRedisEval.Return(redis.NewCmdResult(int64(0), io.EOF))
 
-	err := sem.Release(context.Background(), "testKey", "testId")
+	acq, err := suite.sem.Acquire(context.Background(), RedisSemaphoreTestKey, RedisSemaphoreTestId)
 
-	assert.Equal(t, ErrSemaphoreGone, err)
+	suite.False(acq)
+	suite.Equal(ErrSemaphoreGone, err)
+}
+
+func (suite *RedisSemaphoreTestSuite) TestAcquire_BadInput() {
+	suite.mockRedisEval.Return(redis.NewCmdResult(int64(0), nil))
+
+	acq, err := suite.sem.Acquire(context.Background(), "", "")
+
+	suite.False(acq)
+	suite.Equal(ErrSemaphore, err)
+}
+
+func (suite *RedisSemaphoreTestSuite) TestCheck() {
+	suite.mockRedisEval.Return(redis.NewCmdResult(int64(1), nil))
+
+	acq, err := suite.sem.Check(context.Background(), RedisSemaphoreTestKey, RedisSemaphoreTestId)
+
+	suite.True(acq)
+	suite.Nil(err)
+}
+
+func (suite *RedisSemaphoreTestSuite) TestCheck_Error() {
+	suite.mockRedisEval.Return(redis.NewCmdResult(int64(0), io.EOF))
+
+	acq, err := suite.sem.Check(context.Background(), RedisSemaphoreTestKey, RedisSemaphoreTestId)
+
+	suite.False(acq)
+	suite.Equal(ErrSemaphoreGone, err)
+}
+
+func (suite *RedisSemaphoreTestSuite) TestCheck_BadInput() {
+	suite.mockRedisEval.Return(redis.NewCmdResult(int64(0), nil))
+
+	acq, err := suite.sem.Check(context.Background(), "", "")
+
+	suite.False(acq)
+	suite.Equal(ErrSemaphore, err)
+}
+
+func (suite *RedisSemaphoreTestSuite) TestRelease() {
+	suite.mockRedisZRem.Return(redis.NewIntResult(1, nil))
+
+	err := suite.sem.Release(context.Background(), RedisSemaphoreTestKey, RedisSemaphoreTestId)
+
+	suite.Nil(err)
+}
+
+func (suite *RedisSemaphoreTestSuite) TestRelease_Error() {
+	suite.mockRedisZRem.Return(redis.NewIntResult(0, io.EOF))
+
+	err := suite.sem.Release(context.Background(), RedisSemaphoreTestKey, RedisSemaphoreTestId)
+
+	suite.Equal(ErrSemaphoreGone, err)
+}
+
+func (suite *RedisSemaphoreTestSuite) TestRelease_BadInput() {
+	suite.mockRedisZRem.Return(redis.NewIntResult(0, io.EOF))
+
+	err := suite.sem.Release(context.Background(), "", "")
+
+	suite.Equal(ErrSemaphore, err)
 }

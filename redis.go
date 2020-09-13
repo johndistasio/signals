@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// Redis declares the methods we need from go-redis so that we can mock them for testing.
+// Redis declares the methods we need from go-redis so that we can mock them for testing. It does not provide a complete
+// abstraction as-is; the underlying implementation will leak out into the application and tests.
 type Redis interface {
 	Del(ctx context.Context, keys ...string) *impl.IntCmd
 	Expire(ctx context.Context, key string, expiration time.Duration) *impl.BoolCmd
