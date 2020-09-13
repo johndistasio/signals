@@ -15,6 +15,8 @@ type Publisher interface {
 	Publish(ctx context.Context, channel string, payload []byte) error
 }
 
+const channelKeyPrefix = "channel:"
+
 type RedisPublisher struct {
 	Redis Redis
 }
@@ -27,7 +29,9 @@ func (r *RedisPublisher) Publish(ctx context.Context, channel string, payload []
 		return ErrPublisher
 	}
 
-	err := r.Redis.Publish(ctx, channel, payload).Err()
+	key := channelKeyPrefix+channel
+
+	err := r.Redis.Publish(ctx, key, payload).Err()
 
 	if err != nil {
 		ext.LogError(span, err)

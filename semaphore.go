@@ -21,6 +21,8 @@ type Semaphore interface {
 	Release(ctx context.Context, name, id string) error
 }
 
+const lockKeyPrefix = "lock:"
+
 // RedisSemaphore implements the counting semaphore from the "Redis in Action" book. Lua scripting is used to avoid
 // race conditions between check and set operations. It can and should be shared by multiple goroutines.
 type RedisSemaphore struct {
@@ -87,13 +89,15 @@ func (r *RedisSemaphore) Acquire(ctx context.Context, name string, id string) (b
 		return false, ErrSemaphore
 	}
 
+	key := lockKeyPrefix+name
+
 	now := time.Now()
 	then := now.Add(-r.Age)
 
 	nowEpoch := now.Unix()
 	thenEpoch := then.Unix()
 
-	acq, err := acquireScript.Eval(ctx, r.Redis, []string{name}, thenEpoch, r.Count, nowEpoch, id).Result()
+	acq, err := acquireScript.Eval(ctx, r.Redis, []string{key}, thenEpoch, r.Count, nowEpoch, id).Result()
 
 	if err != nil {
 		ext.LogError(span, err)
@@ -111,9 +115,11 @@ func (r *RedisSemaphore) Check(ctx context.Context, name string, id string) (boo
 		return false, ErrSemaphore
 	}
 
+	key := lockKeyPrefix+name
+
 	thenEpoch := time.Now().Add(-r.Age).Unix()
 
-	acq, err := checkScript.Eval(ctx, r.Redis, []string{name}, thenEpoch, id).Result()
+	acq, err := checkScript.Eval(ctx, r.Redis, []string{key}, thenEpoch, id).Result()
 
 	if err != nil {
 		ext.LogError(span, err)
@@ -131,7 +137,9 @@ func (r *RedisSemaphore) Release(ctx context.Context, name string, id string) er
 		return ErrSemaphore
 	}
 
-	err := r.Redis.ZRem(ctx, name, id).Err()
+	key := lockKeyPrefix+name
+
+	err := r.Redis.ZRem(ctx, key, id).Err()
 
 	if err != nil {
 		ext.LogError(span, err)

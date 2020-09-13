@@ -118,8 +118,6 @@ type SeatHandler struct {
 	lock Semaphore
 }
 
-const CallKeyPrefix = "call:"
-
 func (s *SeatHandler) Handle(session string, call string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SeatHandler.Handle")
@@ -130,7 +128,7 @@ func (s *SeatHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		acq, err := s.lock.Acquire(ctx, CallKeyPrefix+call, session)
+		acq, err := s.lock.Acquire(ctx, call, session)
 
 		if err != nil {
 			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
@@ -162,8 +160,6 @@ type SignalHandler struct {
 	pub  Publisher
 }
 
-const ChannelKeyPrefix = "channel:"
-
 func (s *SignalHandler) Handle(session string, call string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SignalHandler.Handle")
@@ -181,7 +177,7 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		acq, err := s.lock.Check(ctx, CallKeyPrefix+call, session)
+		acq, err := s.lock.Check(ctx, call, session)
 
 		if err != nil {
 			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
@@ -230,7 +226,7 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		err = s.pub.Publish(ctx, ChannelKeyPrefix+call, encoded)
+		err = s.pub.Publish(ctx, call, encoded)
 
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -265,7 +261,7 @@ func (wh *WebsocketHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		held, err := wh.lock.Check(ctx, CallKeyPrefix+call, session)
+		held, err := wh.lock.Check(ctx, call, session)
 
 		if err != nil {
 			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
@@ -295,7 +291,7 @@ func (wh *WebsocketHandler) Handle(session string, call string) http.Handler {
 			return nil
 		})
 
-		pubsub := wh.redis.Subscribe(ctx, ChannelKeyPrefix+call)
+		pubsub := wh.redis.Subscribe(ctx, "channel:"+call)
 		_, err = pubsub.Receive(ctx)
 
 		if err != nil {

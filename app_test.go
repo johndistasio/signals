@@ -48,7 +48,7 @@ type SeatHandlerTestSuite struct {
 
 func (suite *SeatHandlerTestSuite) SetupTest() {
 	lock := new(mocks.Semaphore)
-	suite.mockLock = lock.On("Acquire", mock.Anything, CallKeyPrefix+"test", "test")
+	suite.mockLock = lock.On("Acquire", mock.Anything, "test", "test")
 
 	handler := (&SeatHandler{lock: lock}).Handle("test", "test")
 
@@ -106,10 +106,10 @@ func (suite *SignalHandlerTestSuite) SetupTest() {
 	suite.body = strings.NewReader(`{"Message": "hello"}`)
 
 	lock := new(mocks.Semaphore)
-	suite.mockLock = lock.On("Check", mock.Anything, CallKeyPrefix+"test", "test")
+	suite.mockLock = lock.On("Check", mock.Anything, "test", "test")
 
 	pub := new(mocks.Publisher)
-	suite.mockPublisher = pub.On("Publish", mock.Anything, ChannelKeyPrefix+"test", mock.Anything)
+	suite.mockPublisher = pub.On("Publish", mock.Anything, "test", mock.Anything)
 
 	handler := (&SignalHandler{lock: lock, pub: pub}).Handle("test", "test")
 

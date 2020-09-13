@@ -20,7 +20,10 @@ type RedisPublisherTestSuite struct {
 
 func (suite *RedisPublisherTestSuite) SetupTest() {
 	rdb := new(mocks.Redis)
-	suite.mockRedisPublish = rdb.On("Publish", mock.Anything, RedisPublisherTestChannel, mock.Anything)
+
+	key := channelKeyPrefix+RedisPublisherTestChannel
+
+	suite.mockRedisPublish = rdb.On("Publish", mock.Anything, key, mock.Anything)
 	suite.pub = &RedisPublisher{rdb}
 }
 
@@ -43,7 +46,7 @@ func (suite *RedisPublisherTestSuite) TestPublish_Error() {
 
 	payload := []byte("hello")
 
-	err := suite.pub.Publish(context.Background(), "test", payload)
+	err := suite.pub.Publish(context.Background(), RedisPublisherTestChannel, payload)
 
 	suite.Equal(ErrPublisherGone, err)
 }
@@ -51,7 +54,7 @@ func (suite *RedisPublisherTestSuite) TestPublish_Error() {
 func (suite *RedisPublisherTestSuite) TestPublish_BadInput() {
 	suite.mockRedisPublish.Return(redis.NewIntResult(int64(0), nil))
 
-	err := suite.pub.Publish(context.Background(), "test", []byte{})
+	err := suite.pub.Publish(context.Background(), RedisPublisherTestChannel, []byte{})
 
 	suite.Equal(ErrPublisher, err)
 }

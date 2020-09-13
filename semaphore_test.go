@@ -24,8 +24,11 @@ type RedisSemaphoreTestSuite struct {
 func (suite *RedisSemaphoreTestSuite) SetupTest() {
 	rdb := new(mocks.Redis)
 	suite.sem = &RedisSemaphore{Redis: rdb}
-	suite.mockRedisEval = rdb.On("Eval", mock.Anything, mock.Anything, []string{RedisSemaphoreTestKey}, mock.Anything)
-	suite.mockRedisZRem = rdb.On("ZRem", mock.Anything, RedisSemaphoreTestKey, []interface{}{RedisSemaphoreTestId})
+
+	key := lockKeyPrefix+RedisSemaphoreTestKey
+
+	suite.mockRedisEval = rdb.On("Eval", mock.Anything, mock.Anything, []string{key}, mock.Anything)
+	suite.mockRedisZRem = rdb.On("ZRem", mock.Anything, key, []interface{}{RedisSemaphoreTestId})
 }
 
 func TestRedisSemaphoreTestSuite(t *testing.T) {
