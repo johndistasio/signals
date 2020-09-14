@@ -1,18 +1,13 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"github.com/go-redis/redis/v8"
-	"github.com/gorilla/websocket"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
-	"github.com/pkg/errors"
 	"io/ioutil"
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 )
 
 type AppHandler interface {
@@ -233,161 +228,4 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 	})
-}
-
-type WebsocketHandler struct {
-	call     string
-	session  string
-	pubsub   *redis.PubSub
-	conn     *websocket.Conn
-	lock     Semaphore
-	redis    Redis
-	stopChan chan int
-}
-
-var upgrader = websocket.Upgrader{}
-
-func (wh *WebsocketHandler) Handle(session string, call string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		span, ctx := opentracing.StartSpanFromContext(r.Context(), "WebsocketHandler.Handle")
-		defer span.Finish()
-
-		wh.stopChan = make(chan int)
-		wh.session = session
-		wh.call = call
-
-		if r.Method != "GET" {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
-		held, err := wh.lock.Check(ctx, call, session)
-
-		if err != nil {
-			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
-			return
-		}
-
-		if !held {
-			w.WriteHeader(http.StatusConflict)
-			return
-		}
-
-		// Unwrap the ResponseWriter because AppResponseWriter doesn't implement http.Hijacker.
-		conn, err := upgrader.Upgrade(w.(*AppResponseWriter).ResponseWriter, r, nil)
-		wh.conn = conn
-
-		if err != nil {
-			// Need to set this manually because we have to use http.ResponseWriter directly.
-			w.(*AppResponseWriter).SetCode(http.StatusBadRequest)
-			ext.LogError(span, err)
-			return
-		}
-
-		conn.SetCloseHandler(func(code int, text string) error {
-			close(wh.stopChan)
-			message := websocket.FormatCloseMessage(code, "")
-			_ = conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
-			return nil
-		})
-
-		pubsub := wh.redis.Subscribe(ctx, "channel:"+call)
-		_, err = pubsub.Receive(ctx)
-
-		if err != nil {
-			ext.LogError(span, err)
-			http.Error(w, "pubsub backend unavailable", http.StatusInternalServerError)
-			return
-		}
-
-		wh.pubsub = pubsub
-
-		// Ensure control messages are processed.
-		go func() {
-			for {
-				if _, _, err := conn.NextReader(); err != nil {
-					_ = conn.Close()
-					return
-				}
-			}
-		}()
-
-		go wh.loop()
-	})
-}
-
-func (wh *WebsocketHandler) onMessage() {
-
-}
-
-func (wh *WebsocketHandler) loop() {
-	defer func() {
-		_ = wh.conn.Close()
-		_ = wh.pubsub.Close()
-	}()
-
-	ch := wh.pubsub.Channel()
-
-	for {
-		select {
-		case _, closed := <-wh.stopChan:
-			if !closed {
-				return
-			}
-		case remote, ok := <-ch:
-			span, _ := opentracing.StartSpanFromContext(context.Background(), "WebsocketHandler.loop")
-			span.SetTag("call.id", wh.call)
-			span.SetTag("session.id", wh.session)
-
-			if !ok {
-				ext.LogError(span, errors.New("pubsub backend gone"))
-				span.Finish()
-				return
-			}
-
-			var signal Signal
-
-			err := json.Unmarshal([]byte(remote.Payload), &signal)
-
-			if err != nil {
-				ext.LogError(span, err)
-				span.Finish()
-				return
-			}
-
-			span.SetTag("call.peer.id", signal.PeerId)
-
-			if signal.CallId != wh.call {
-				ext.LogError(span, errors.Errorf("received unexpected signal for call %s", signal.CallId))
-				span.Finish()
-				return
-			}
-
-			if signal.PeerId == wh.session {
-				span.Finish()
-				continue
-			}
-
-			m := EndUserMessage{
-				Message: signal.Message,
-			}
-
-			b, err := json.Marshal(m)
-
-			if err != nil {
-				ext.LogError(span, err)
-				span.Finish()
-				return
-			}
-
-			err = wh.conn.WriteMessage(websocket.TextMessage, b)
-
-			if err != nil {
-				ext.LogError(span, err)
-				span.Finish()
-				return
-			}
-
-		}
-	}
 }

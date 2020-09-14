@@ -85,6 +85,16 @@ func (m *PubSub) Close() error {
 	return args.Error(0)
 }
 
+func (m *PubSub) Receive(ctx context.Context) (interface{}, error) {
+	args := m.Called(ctx)
+	return args.Get(0), args.Error(1)
+}
+
+func (m *PubSub) ReceiveTimeout(ctx context.Context, timeout time.Duration) (interface{}, error) {
+	args := m.Called(ctx, timeout)
+	return args.Get(0), args.Error(1)
+}
+
 func (m *PubSub) ReceiveMessage(ctx context.Context) (*redis.Message, error) {
 	args := m.Called(ctx)
 	return args.Get(0).(*redis.Message), args.Error(1)

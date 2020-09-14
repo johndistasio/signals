@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/gorilla/websocket"
 	"github.com/opentracing/opentracing-go"
 	"github.com/uber/jaeger-client-go"
 	jaegerConfig "github.com/uber/jaeger-client-go/config"
@@ -87,9 +88,12 @@ func main() {
 
 	seat := &SeatHandler{locker}
 	signal := &SignalHandler{locker, publisher}
+
 	ws := &WebsocketHandler{
-		lock:  locker,
-		redis: rdb,
+		lock:        locker,
+		redis:       rdb,
+		upgrader:    websocket.Upgrader{},
+		readTimeout: 30 * time.Second,
 	}
 
 	app := &App{

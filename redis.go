@@ -29,6 +29,8 @@ type Redis interface {
 // PubSub declares the methods we need from go-redis's PubSub type so we can mock them for testing.
 type PubSub interface {
 	Close() error
+	Receive(ctx context.Context) (interface{}, error)
+	ReceiveTimeout(ctx context.Context, timeout time.Duration) (interface{}, error)
 	ReceiveMessage(ctx context.Context) (*impl.Message, error)
 	Subscribe(ctx context.Context, channels ...string) error
 }
