@@ -14,10 +14,12 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
+	"net/url"
+	"strings"
 )
 
 var (
-	devel     = kingpin.Flag("devel", "Enable development mode.").Envar("SIGNAL_DEVEL").Bool()
+	devel     = kingpin.Flag("devel", "Enable development mode: set insecure cookies and ignore CORS.").Envar("SIGNAL_DEVEL").Bool()
 	debugPort = kingpin.Flag("debug-port", "Host and port for debug endpoints.").Envar("SIGNAL_DEBUG_ADDR").Default(":8090").TCP()
 	port      = kingpin.Flag("port", "Host and port for service endpoints.").Envar("SIGNAL_ADDR").Default(":8080").TCP()
 
@@ -26,6 +28,8 @@ var (
 	seatCount  = kingpin.Flag("seat-count", "Max clients for signaling session.").Envar("SIGNAL_SEAT_COUNT").Default("2").Int()
 	seatMaxAge = kingpin.Flag("seat-max-age", "Max age for signaling session seat.").Envar("SIGNAL_SEAT_MAX_AGE").Default("30s").Duration()
 
+	// The port here should be kept in sync with the value of port.
+	wsOrigin = kingpin.Flag("ws-origin", "Time between websocket client liveliness check.").Envar("SIGNAL_WS_ORIGIN").Default("http://localhost:8080").URL()
 	wsPingInterval = kingpin.Flag("ws-ping-interval", "Time between websocket client liveliness check.").Envar("SIGNAL_WS_PING_INTERVAL").Default("5s").Duration()
 	wsReadTimeout  = kingpin.Flag("ws-read-timeout", "Max time between websocket reads. Must be greater then ping interval.").Envar("SIGNAL_WS_READ_TIMEOUT").Default("10s").Duration()
 )
@@ -109,13 +113,6 @@ func main() {
 	publisher := &RedisPublisher{rdb}
 
 	session := &SessionHandler{
-
-		// TODO config
-		Domain: "",
-
-		// TODO config
-		Path: "",
-
 		Insecure:          *devel,
 		Javascript:        false,
 		CreateSessionId:   GenerateSessionId,
@@ -125,14 +122,39 @@ func main() {
 	seat := &SeatHandler{locker, publisher}
 	signal := &SignalHandler{locker, publisher}
 
+	var fun func(r *http.Request) bool
+
+	if *devel {
+		fun = func(*http.Request) bool {
+			return true
+		}
+	} else {
+		fun = func(r *http.Request) bool {
+			origin := r.Header["Origin"]
+
+			if len(origin) == 0 {
+				return true
+			}
+
+			u, err := url.Parse(origin[0])
+
+			if err != nil {
+				return false
+			}
+
+			return strings.ToLower(u.Host) == strings.ToLower((*wsOrigin).Host)
+		}
+	}
+
 	ws := &WebsocketHandler{
 		lock:         locker,
 		redis:        rdb,
 		readTimeout:  *wsReadTimeout,
 		pingInterval: *wsPingInterval,
 
-		// TODO config
-		upgrader: websocket.Upgrader{},
+		upgrader: websocket.Upgrader{
+			CheckOrigin: fun,
+		},
 	}
 
 	app := &App{
