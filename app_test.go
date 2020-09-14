@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"github.com/johndistasio/signaling/mocks"
 	"github.com/stretchr/testify/assert"
@@ -34,10 +35,47 @@ func TestSplitPath_Operation(t *testing.T) {
 }
 
 func TestSplitPath_OperationSlash(t *testing.T) {
-	head, call, op := SplitPath("/call/abc123/signal")
+	head, call, op := SplitPath("/call/abc123/signal/")
 	assert.Equal(t, "call", head)
 	assert.Equal(t, "abc123", call)
 	assert.Equal(t, "signal", op)
+}
+
+func TestEndUserMessage_Unmarshal(t *testing.T) {
+	raw := `
+{
+	"kind": "PEER",
+	"body": "test"
+}
+`
+	var eum EndUserMessage
+
+	err := json.Unmarshal([]byte(raw), &eum)
+
+	assert.Nil(t, err)
+	assert.Equal(t, MessageKindPeer, eum.Kind)
+	assert.Equal(t, "test", eum.Body)
+}
+
+
+func TestInternalMessage_Marshal(t *testing.T) {
+	raw := `
+{
+	"kind": "PEER",
+	"body": "test",
+	"peerId": "testPeer",
+	"callId": "testCall"
+}
+`
+	var im InternalMessage
+
+	err := json.Unmarshal([]byte(raw), &im)
+
+	assert.Nil(t, err)
+	assert.Equal(t, MessageKindPeer, im.Kind)
+	assert.Equal(t, "test", im.Body)
+	assert.Equal(t, "testPeer", im.PeerId)
+	assert.Equal(t, "testCall", im.CallId)
 }
 
 type SeatHandlerTestSuite struct {
@@ -109,7 +147,7 @@ type SignalHandlerTestSuite struct {
 }
 
 func (suite *SignalHandlerTestSuite) SetupTest() {
-	suite.body = strings.NewReader(`{"Message": "hello"}`)
+	suite.body = strings.NewReader(`{"Kind": "OFFER", "Body": "hello"}`)
 
 	lock := new(mocks.Semaphore)
 	suite.mockLock = lock.On("Check", mock.Anything, "test", "test")

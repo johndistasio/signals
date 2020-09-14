@@ -141,7 +141,14 @@ func (s *SeatHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		notif := Signal{PeerId: session, CallId: call, Message: "peer"}
+		notif := InternalMessage{
+			EndUserMessage: EndUserMessage{
+				Kind: MessageKindPeer,
+			},
+			PeerId: session,
+			CallId: call,
+		}
+
 		bytes, _ := json.Marshal(notif)
 
 		err = s.pub.Publish(ctx, call, bytes)
@@ -155,15 +162,21 @@ func (s *SeatHandler) Handle(session string, call string) http.Handler {
 	})
 }
 
-type Signal struct {
-	PeerId  string
-	CallId  string
-	Message string
-}
+const MessageKindPeer = "PEER"
+
+const MessageKindOffer = "OFFER"
+
+const MessageKindAnswer = "ANSWER"
 
 type EndUserMessage struct {
-	Error   bool
-	Message string
+	Body string `json:"body,omitempty"`
+	Kind string `json:"kind,omitempty"`
+}
+
+type InternalMessage struct {
+	EndUserMessage
+	PeerId string `json:"peerId"`
+	CallId string `json:"callId"`
 }
 
 type SignalHandler struct {
@@ -218,18 +231,18 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 
 		err = json.Unmarshal(body, &input)
 
-		if err != nil || input.Message == "" {
+		if err != nil || input.Body == "" || (input.Kind != MessageKindOffer && input.Kind != MessageKindAnswer) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
-		signal := Signal{
-			PeerId:  session,
-			CallId:  call,
-			Message: input.Message,
+		peerMessage := InternalMessage{
+			EndUserMessage: input,
+			PeerId:         session,
+			CallId:         call,
 		}
 
-		encoded, err := json.Marshal(signal)
+		encoded, err := json.Marshal(peerMessage)
 
 		if err != nil {
 			ext.LogError(span, err)
@@ -245,7 +258,6 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 		}
 	})
 }
-
 
 type WebsocketHandler struct {
 	lock         Semaphore
@@ -354,7 +366,7 @@ func onWebsocket(pingInterval time.Duration, readTimeout time.Duration, conn *we
 		select {
 		case <-ctx.Done():
 			return
-		case <- ticker.C:
+		case <-ticker.C:
 			err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(1*time.Second))
 
 			if err != nil {
@@ -378,32 +390,30 @@ func onWebsocketSignal(ctx context.Context, conn *websocket.Conn, message []byte
 	span.SetTag("call.id", call)
 	span.SetTag("session.id", session)
 
-	var signal Signal
+	var im InternalMessage
 
-	err := json.Unmarshal(message, &signal)
+	err := json.Unmarshal(message, &im)
 
-	if err != nil {
+	switch {
+	case err != nil:
 		ext.LogError(span, err)
-		span.Finish()
+		return
+	case im.CallId != call:
+		ext.LogError(span, errors.Errorf("received unexpected signal for call %s", im.CallId))
+		return
+	case im.PeerId == "":
+		ext.LogError(span, errors.New("received signal missing peer ID"))
+		return
+	case im.Kind != MessageKindPeer && im.Kind != MessageKindOffer && im.Kind != MessageKindAnswer:
+		ext.LogError(span, errors.Errorf(`received unexpected message kind "%s" from %s:%s`, im.Kind, im.CallId, im.PeerId))
+		return
+	case im.PeerId == session:
 		return
 	}
 
-	span.SetTag("call.peer.id", signal.PeerId)
+	span.SetTag("call.peer.id", im.PeerId)
 
-	if signal.CallId != call {
-		ext.LogError(span, errors.Errorf("received unexpected signal for call %s", signal.CallId))
-		return
-	}
-
-	if signal.PeerId == session {
-		return
-	}
-
-	m := EndUserMessage{
-		Message: signal.Message,
-	}
-
-	b, err := json.Marshal(m)
+	b, err := json.Marshal(im.EndUserMessage)
 
 	if err != nil {
 		ext.LogError(span, err)
