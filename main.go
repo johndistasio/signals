@@ -8,11 +8,18 @@ import (
 	jaegerConfig "github.com/uber/jaeger-client-go/config"
 	jaegerLog "github.com/uber/jaeger-client-go/log"
 	jaegerMetrics "github.com/uber/jaeger-lib/metrics"
+	"gopkg.in/alecthomas/kingpin.v2"
 	"io"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"time"
+)
+
+var (
+	devel = kingpin.Flag("devel", "Enable development mode.").Envar("SIGNAL_DEVEL").Bool()
+	debugPort = kingpin.Arg("debug-port", "Port for debug endpoints").Envar("SIGNAL_DEBUG_PORT").Default(":8090").TCP()
+	port = kingpin.Arg("port", "Port for service endpoints").Envar("SIGNAL_PORT").Default(":8080").TCP()
 )
 
 func initTracer() (opentracing.Tracer, io.Closer, error) {
@@ -50,6 +57,10 @@ func main() {
 		log.Fatalf("fatal: %v\n", err)
 	}
 
+	kingpin.Parse()
+
+	log.Println((*debugPort).String())
+
 	// Set the singleton opentracing.Tracer with the Jaeger tracer.
 	opentracing.SetGlobalTracer(tracer)
 	defer closer.Close()
@@ -74,9 +85,8 @@ func main() {
 	}))
 
 	go func() {
-		// TODO config
-		log.Println("Starting debug server on :8000")
-		err := http.ListenAndServe(":8000", nil)
+		log.Printf("Starting debug server on %s\n", (*debugPort).String())
+		err := http.ListenAndServe((*debugPort).String(), nil)
 
 		if err != nil {
 			log.Fatalf("fatal: %v\n", err)
@@ -130,13 +140,11 @@ func main() {
 	mux.Handle("/", app)
 
 	server := &http.Server{
-		// TODO config
-		Addr:    ":9000",
+		Addr:    (*port).String(),
 		Handler: mux,
 	}
 
-	// TODO config
-	log.Println("Starting signaling server on :9000")
+	log.Printf("Starting signaling server on %s\n", (*port).String())
 	err = server.ListenAndServe()
 
 	if err != nil {
