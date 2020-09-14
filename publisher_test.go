@@ -21,7 +21,7 @@ type RedisPublisherTestSuite struct {
 func (suite *RedisPublisherTestSuite) SetupTest() {
 	rdb := new(mocks.Redis)
 
-	key := channelKeyPrefix+RedisPublisherTestChannel
+	key := channelKeyPrefix + RedisPublisherTestChannel
 
 	suite.mockRedisPublish = rdb.On("Publish", mock.Anything, key, mock.Anything)
 	suite.pub = &RedisPublisher{rdb}

@@ -25,7 +25,7 @@ func (suite *RedisSemaphoreTestSuite) SetupTest() {
 	rdb := new(mocks.Redis)
 	suite.sem = &RedisSemaphore{Redis: rdb}
 
-	key := lockKeyPrefix+RedisSemaphoreTestKey
+	key := lockKeyPrefix + RedisSemaphoreTestKey
 
 	suite.mockRedisEval = rdb.On("Eval", mock.Anything, mock.Anything, []string{key}, mock.Anything)
 	suite.mockRedisZRem = rdb.On("ZRem", mock.Anything, key, []interface{}{RedisSemaphoreTestId})

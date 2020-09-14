@@ -57,7 +57,6 @@ func TestEndUserMessage_Unmarshal(t *testing.T) {
 	assert.Equal(t, "test", eum.Body)
 }
 
-
 func TestInternalMessage_Marshal(t *testing.T) {
 	raw := `
 {

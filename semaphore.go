@@ -89,7 +89,7 @@ func (r *RedisSemaphore) Acquire(ctx context.Context, name string, id string) (b
 		return false, ErrSemaphore
 	}
 
-	key := lockKeyPrefix+name
+	key := lockKeyPrefix + name
 
 	now := time.Now()
 	then := now.Add(-r.Age)
@@ -115,7 +115,7 @@ func (r *RedisSemaphore) Check(ctx context.Context, name string, id string) (boo
 		return false, ErrSemaphore
 	}
 
-	key := lockKeyPrefix+name
+	key := lockKeyPrefix + name
 
 	thenEpoch := time.Now().Add(-r.Age).Unix()
 
@@ -137,7 +137,7 @@ func (r *RedisSemaphore) Release(ctx context.Context, name string, id string) er
 		return ErrSemaphore
 	}
 
-	key := lockKeyPrefix+name
+	key := lockKeyPrefix + name
 
 	err := r.Redis.ZRem(ctx, key, id).Err()
 

@@ -6,7 +6,7 @@ import (
 	"sort"
 )
 
-type HeaderPrinter struct {}
+type HeaderPrinter struct{}
 
 func (c *HeaderPrinter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	header := `
@@ -38,5 +38,3 @@ func (c *HeaderPrinter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	_, _ = w.Write([]byte(footer))
 }
-
-

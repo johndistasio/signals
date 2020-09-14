@@ -40,4 +40,3 @@ func (r *RedisPublisher) Publish(ctx context.Context, topic string, payload []by
 
 	return nil
 }
-

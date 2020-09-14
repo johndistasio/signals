@@ -21,7 +21,7 @@ func (m *Redis) Expire(ctx context.Context, key string, expiration time.Duration
 	return args.Get(0).(*redis.BoolCmd)
 }
 
-func (m *Redis) Get(ctx context.Context, key string) *redis.StringCmd{
+func (m *Redis) Get(ctx context.Context, key string) *redis.StringCmd {
 	args := m.Called(ctx, key)
 	return args.Get(0).(*redis.StringCmd)
 }
