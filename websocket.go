@@ -8,16 +8,16 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"github.com/pkg/errors"
-	"net"
 	"net/http"
 	"time"
 )
 
 type WebsocketHandler struct {
-	lock        Semaphore
-	redis       Redis
-	upgrader    websocket.Upgrader
-	readTimeout time.Duration
+	lock         Semaphore
+	redis        Redis
+	upgrader     websocket.Upgrader
+	readTimeout  time.Duration
+	pingInterval time.Duration
 }
 
 func (wh *WebsocketHandler) Handle(session string, call string) http.Handler {
@@ -62,52 +62,33 @@ func (wh *WebsocketHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		go onWebsocket(wh.readTimeout, conn, pubsub, session, call)
+		go onWebsocket(wh.pingInterval, wh.readTimeout, conn, pubsub, session, call)
 	})
 }
 
 // This function handles the complexity of managing the websocket connection and shuttling messages to the client.
-func onWebsocket(timeout time.Duration, conn *websocket.Conn, pubsub *redis.PubSub, session string, call string) {
-	// Clean up IO resources upon returning from this function. Any goroutines spawned by this function should tie their
+func onWebsocket(pingInterval time.Duration, readTimeout time.Duration, conn *websocket.Conn, pubsub *redis.PubSub, session string, call string) {
+	// Initialize a ticket for sending ping messages to the client; we'll use this to detect dead clients.
+	ticker := time.NewTicker(pingInterval)
+
+	// Clean up resources upon returning from this function. Any goroutines spawned by this function should tie their
 	// lifecycle to the connection or the pubsub so as to avoid leaks.
 	defer func() {
 		_ = conn.Close()
 		_ = pubsub.Close()
+		ticker.Stop()
 	}()
 
 	// Set up a cancellable context that subroutines can use to signal that we should bail on this websocket.
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Set an initial read deadline. The connection will be closed if we don't receive a ping within this time frame.
-	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	// Set an initial read deadline. The connection will be closed if we don't receive a pong within this time frame.
+	_ = conn.SetReadDeadline(time.Now().Add(readTimeout))
 
-	// TODO manage read deadline with pong instead
-
-	// Handle ping messages from the client. Duplicates the default ping handler, but also resets the read deadline on
-	// each ping since we aren't expecting any application-level input from the client, and calls our cancel function
-	// on unrecoverable connection errors.
-	conn.SetPingHandler(func(appData string) error {
+	// Handle pong messages from the client, resetting the read deadline.
+	conn.SetPongHandler(func(appData string) error {
 		// Reset the read deadline upon receiving a ping.
-		_ = conn.SetReadDeadline(time.Now().Add(timeout))
-
-		err := conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(1*time.Second))
-
-		if err == websocket.ErrCloseSent {
-			cancel()
-			return nil
-		}
-
-		if e, ok := err.(net.Error); ok && !e.Temporary() {
-			cancel()
-			return nil
-		}
-
-		if err != nil {
-			cancel()
-			return err
-		}
-
-		return nil
+		return conn.SetReadDeadline(time.Now().Add(readTimeout))
 	})
 
 	// Handle close messages or disconnects from the client. Duplicates the default close message handler, but calls our
@@ -120,7 +101,7 @@ func onWebsocket(timeout time.Duration, conn *websocket.Conn, pubsub *redis.PubS
 	})
 
 	go func() {
-		// A closure of the socket is going to mess up writes, so we call our cancel func to bail on the main websocket
+		// Closing the socket is going to mess up writes, so we call our cancel func to bail on the main websocket
 		// handler loop. Called in a defer to ensure this happens even in the case of panics.
 		defer cancel()
 
@@ -138,6 +119,12 @@ func onWebsocket(timeout time.Duration, conn *websocket.Conn, pubsub *redis.PubS
 		select {
 		case <-ctx.Done():
 			return
+		case <- ticker.C:
+			err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(1*time.Second))
+
+			if err != nil {
+				return
+			}
 		case msg, ok := <-ch:
 			if !ok {
 				// This channel will close when the pubsub is closed, either explicitly by us or due to connection loss.
@@ -147,7 +134,6 @@ func onWebsocket(timeout time.Duration, conn *websocket.Conn, pubsub *redis.PubS
 			onWebsocketSignal(ctx, conn, []byte(msg.Payload), session, call)
 		}
 	}
-
 }
 
 func onWebsocketSignal(ctx context.Context, conn *websocket.Conn, message []byte, session string, call string) {

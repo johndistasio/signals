@@ -90,10 +90,11 @@ func main() {
 	signal := &SignalHandler{locker, publisher}
 
 	ws := &WebsocketHandler{
-		lock:        locker,
-		redis:       rdb,
-		upgrader:    websocket.Upgrader{},
-		readTimeout: 30 * time.Second,
+		lock:         locker,
+		redis:        rdb,
+		upgrader:     websocket.Upgrader{},
+		readTimeout:  10 * time.Second,
+		pingInterval: 5 * time.Second,
 	}
 
 	app := &App{
