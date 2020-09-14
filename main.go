@@ -86,7 +86,7 @@ func main() {
 		ValidateSessionId: ParseSessionId,
 	}
 
-	seat := &SeatHandler{locker}
+	seat := &SeatHandler{locker, publisher}
 	signal := &SignalHandler{locker, publisher}
 
 	ws := &WebsocketHandler{

@@ -42,15 +42,19 @@ func TestSplitPath_OperationSlash(t *testing.T) {
 
 type SeatHandlerTestSuite struct {
 	suite.Suite
-	mockLock *mock.Call
-	server   *httptest.Server
+	mockLock      *mock.Call
+	mockPublisher *mock.Call
+	server        *httptest.Server
 }
 
 func (suite *SeatHandlerTestSuite) SetupTest() {
 	lock := new(mocks.Semaphore)
 	suite.mockLock = lock.On("Acquire", mock.Anything, "test", "test")
 
-	handler := (&SeatHandler{lock: lock}).Handle("test", "test")
+	pub := new(mocks.Publisher)
+	suite.mockPublisher = pub.On("Publish", mock.Anything, "test", mock.Anything)
+
+	handler := (&SeatHandler{lock: lock, pub: pub}).Handle("test", "test")
 
 	suite.server = httptest.NewServer(handler)
 }
@@ -65,6 +69,8 @@ func TestSeatHandlerTestSuite(t *testing.T) {
 
 func (suite *SeatHandlerTestSuite) TestHandle() {
 	suite.mockLock.Return(true, nil)
+	suite.mockPublisher.Return(nil)
+
 	r, _ := http.Get(suite.server.URL)
 	suite.Equal(http.StatusOK, r.StatusCode)
 }
