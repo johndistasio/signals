@@ -43,6 +43,7 @@ func initTracer() (opentracing.Tracer, io.Closer, error) {
 }
 
 func main() {
+	// TODO config
 	tracer, closer, err := initTracer()
 
 	if err != nil {
@@ -53,6 +54,7 @@ func main() {
 	opentracing.SetGlobalTracer(tracer)
 	defer closer.Close()
 
+	// TODO config
 	rdb := NewRedisClient()
 
 	http.Handle("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,14 +73,28 @@ func main() {
 		}
 	}))
 
+	go func() {
+		// TODO config
+		log.Println("Starting debug server on :8000")
+		err := http.ListenAndServe(":8000", nil)
+
+		if err != nil {
+			log.Fatalf("fatal: %v\n", err)
+		}
+	}()
+
 	locker := &RedisSemaphore{
-		Age:   10 * time.Minute,
+		// TODO config
+		Age: 10 * time.Minute,
+
+		// TODO config
 		Count: 2,
 		Redis: rdb,
 	}
 
 	publisher := &RedisPublisher{rdb}
 
+	// TODO config
 	session := &SessionHandler{
 		Insecure:          true,
 		Javascript:        false,
@@ -90,10 +106,16 @@ func main() {
 	signal := &SignalHandler{locker, publisher}
 
 	ws := &WebsocketHandler{
-		lock:         locker,
-		redis:        rdb,
-		upgrader:     websocket.Upgrader{},
-		readTimeout:  10 * time.Second,
+		lock:  locker,
+		redis: rdb,
+
+		// TODO config
+		upgrader: websocket.Upgrader{},
+
+		// TODO config
+		readTimeout: 10 * time.Second,
+
+		// TODO config
 		pingInterval: 5 * time.Second,
 	}
 
@@ -104,11 +126,19 @@ func main() {
 		WebsocketHandler: ws,
 	}
 
-	http.Handle("/", app)
+	mux := http.NewServeMux()
+	mux.Handle("/", app)
 
+	server := &http.Server{
+		// TODO config
+		Addr:    ":9000",
+		Handler: mux,
+	}
+
+	// TODO config
 	log.Println("Starting signaling server on :9000")
+	err = server.ListenAndServe()
 
-	err = http.ListenAndServe(":9000", nil)
 	if err != nil {
 		log.Fatalf("fatal: %v\n", err)
 	}
