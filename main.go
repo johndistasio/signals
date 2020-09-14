@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
 	"github.com/opentracing/opentracing-go"
 	"github.com/uber/jaeger-client-go"
@@ -13,13 +14,20 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
-	"time"
 )
 
 var (
-	devel = kingpin.Flag("devel", "Enable development mode.").Envar("SIGNAL_DEVEL").Bool()
-	debugPort = kingpin.Arg("debug-port", "Port for debug endpoints").Envar("SIGNAL_DEBUG_PORT").Default(":8090").TCP()
-	port = kingpin.Arg("port", "Port for service endpoints").Envar("SIGNAL_PORT").Default(":8080").TCP()
+	devel     = kingpin.Flag("devel", "Enable development mode.").Envar("SIGNAL_DEVEL").Bool()
+	debugPort = kingpin.Flag("debug-port", "Host and port for debug endpoints.").Envar("SIGNAL_DEBUG_ADDR").Default(":8090").TCP()
+	port      = kingpin.Flag("port", "Host and port for service endpoints.").Envar("SIGNAL_ADDR").Default(":8080").TCP()
+
+	redisAddr = kingpin.Flag("redis-addr", "Redis host and port.").Envar("SIGNAL_REDIS_ADDR").Default("localhost:6379").TCP()
+
+	seatCount  = kingpin.Flag("seat-count", "Max clients for signaling session.").Envar("SIGNAL_SEAT_COUNT").Default("2").Int()
+	seatMaxAge = kingpin.Flag("seat-max-age", "Max age for signaling session seat.").Envar("SIGNAL_SEAT_MAX_AGE").Default("30s").Duration()
+
+	wsPingInterval = kingpin.Flag("ws-ping-interval", "Time between websocket client liveliness check.").Envar("SIGNAL_WS_PING_INTERVAL").Default("5s").Duration()
+	wsReadTimeout  = kingpin.Flag("ws-read-timeout", "Max time between websocket reads. Must be greater then ping interval.").Envar("SIGNAL_WS_READ_TIMEOUT").Default("10s").Duration()
 )
 
 func initTracer() (opentracing.Tracer, io.Closer, error) {
@@ -65,8 +73,7 @@ func main() {
 	opentracing.SetGlobalTracer(tracer)
 	defer closer.Close()
 
-	// TODO config
-	rdb := NewRedisClient()
+	rdb := redis.NewClient(&redis.Options{Addr: (*redisAddr).String()})
 
 	http.Handle("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s, err := rdb.Ping(context.Background()).Result()
@@ -94,19 +101,22 @@ func main() {
 	}()
 
 	locker := &RedisSemaphore{
-		// TODO config
-		Age: 10 * time.Minute,
-
-		// TODO config
-		Count: 2,
+		Age:   *seatMaxAge,
+		Count: *seatCount,
 		Redis: rdb,
 	}
 
 	publisher := &RedisPublisher{rdb}
 
-	// TODO config
 	session := &SessionHandler{
-		Insecure:          true,
+
+		// TODO config
+		Domain: "",
+
+		// TODO config
+		Path: "",
+
+		Insecure:          *devel,
 		Javascript:        false,
 		CreateSessionId:   GenerateSessionId,
 		ValidateSessionId: ParseSessionId,
@@ -116,17 +126,13 @@ func main() {
 	signal := &SignalHandler{locker, publisher}
 
 	ws := &WebsocketHandler{
-		lock:  locker,
-		redis: rdb,
+		lock:         locker,
+		redis:        rdb,
+		readTimeout:  *wsReadTimeout,
+		pingInterval: *wsPingInterval,
 
 		// TODO config
 		upgrader: websocket.Upgrader{},
-
-		// TODO config
-		readTimeout: 10 * time.Second,
-
-		// TODO config
-		pingInterval: 5 * time.Second,
 	}
 
 	app := &App{
