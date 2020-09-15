@@ -55,7 +55,7 @@ Publishing peering data to other clients in room `{call}`. Data is not persisten
 
 ### `GET /call/{call}/ws`
 
-Establishes a websocket connection for receiving published peering data. Returns a `409` when attempting to subscribe to the data feed for a room that the client isn't a member of.
+Establishes a websocket connection for receiving published peering data as events (see above). Returns a `409` when attempting to subscribe to the data feed for a room that the client isn't a member of.
 
 ## Infrastructure Endpoints
 
