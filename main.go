@@ -19,17 +19,17 @@ import (
 )
 
 var (
-	devel     = kingpin.Flag("devel", "Enable development mode: set insecure cookies and ignore CORS.").Envar("SIGNAL_DEVEL").Bool()
-	debugPort = kingpin.Flag("debug-port", "Host and port for debug endpoints.").Envar("SIGNAL_DEBUG_ADDR").Default(":8090").TCP()
-	port      = kingpin.Flag("port", "Host and port for service endpoints.").Envar("SIGNAL_ADDR").Default(":8080").TCP()
+	addr      = kingpin.Flag("addr", "Host:port for service endpoints.").Envar("SIGNAL_ADDR").Default(":8080").TCP()
+	appName   = kingpin.Flag("app-name", "App name for monitoring and observability.").Envar("SIGNAL_APP_NAME").Default("signals").String()
+	devel     = kingpin.Flag("devel", "Enable development mode: set insecure cookies and ignore CORS rules.").Envar("SIGNAL_DEVEL").Bool()
+	infraAddr = kingpin.Flag("infra-addr", "Host:port for infrastructure endpoints.").Envar("SIGNAL_INFRA_ADDR").Default(":8090").TCP()
 
-	redisAddr = kingpin.Flag("redis-addr", "Redis host and port.").Envar("SIGNAL_REDIS_ADDR").Default("localhost:6379").TCP()
+	redisAddr = kingpin.Flag("redis-addr", "Redis host:addr.").Envar("SIGNAL_REDIS_ADDR").Default("localhost:6379").TCP()
 
 	seatCount  = kingpin.Flag("seat-count", "Max clients for signaling session.").Envar("SIGNAL_SEAT_COUNT").Default("2").Int()
 	seatMaxAge = kingpin.Flag("seat-max-age", "Max age for signaling session seat.").Envar("SIGNAL_SEAT_MAX_AGE").Default("30s").Duration()
 
-	// The port here should be kept in sync with the value of port.
-	wsOrigin = kingpin.Flag("ws-origin", "Time between websocket client liveliness check.").Envar("SIGNAL_WS_ORIGIN").Default("http://localhost:8080").URL()
+	wsOrigin       = kingpin.Flag("ws-origin", "Time between websocket client liveliness check.").Envar("SIGNAL_WS_ORIGIN").Default("http://localhost:8080").URL()
 	wsPingInterval = kingpin.Flag("ws-ping-interval", "Time between websocket client liveliness check.").Envar("SIGNAL_WS_PING_INTERVAL").Default("5s").Duration()
 	wsReadTimeout  = kingpin.Flag("ws-read-timeout", "Max time between websocket reads. Must be greater then ping interval.").Envar("SIGNAL_WS_READ_TIMEOUT").Default("10s").Duration()
 )
@@ -38,7 +38,7 @@ func initTracer() (opentracing.Tracer, io.Closer, error) {
 	// Sample configuration for testing. Use constant sampling to sample every trace
 	// and enable LogSpan to log every span via configured Logger.
 	cfg := jaegerConfig.Configuration{
-		ServiceName: "signaling",
+		ServiceName: *appName,
 		Sampler: &jaegerConfig.SamplerConfig{
 			Type:  jaeger.SamplerTypeConst,
 			Param: 1,
@@ -62,16 +62,14 @@ func initTracer() (opentracing.Tracer, io.Closer, error) {
 }
 
 func main() {
+	kingpin.Parse()
+
 	// TODO config
 	tracer, closer, err := initTracer()
 
 	if err != nil {
-		log.Fatalf("fatal: %v\n", err)
+		log.Fatalf("fatal: tracer init: %v\n", err)
 	}
-
-	kingpin.Parse()
-
-	log.Println((*debugPort).String())
 
 	// Set the singleton opentracing.Tracer with the Jaeger tracer.
 	opentracing.SetGlobalTracer(tracer)
@@ -96,11 +94,11 @@ func main() {
 	}))
 
 	go func() {
-		log.Printf("Starting debug server on %s\n", (*debugPort).String())
-		err := http.ListenAndServe((*debugPort).String(), nil)
+		log.Printf("Starting %s infra server on %s\n", *appName, (*infraAddr).String())
+		err := http.ListenAndServe((*infraAddr).String(), nil)
 
 		if err != nil {
-			log.Fatalf("fatal: %v\n", err)
+			log.Fatalf("fatal: infra: %v\n", err)
 		}
 	}()
 
@@ -168,14 +166,14 @@ func main() {
 	mux.Handle("/", app)
 
 	server := &http.Server{
-		Addr:    (*port).String(),
+		Addr:    (*addr).String(),
 		Handler: mux,
 	}
 
-	log.Printf("Starting signaling server on %s\n", (*port).String())
+	log.Printf("Starting %s server on %s\n", *appName, (*addr).String())
 	err = server.ListenAndServe()
 
 	if err != nil {
-		log.Fatalf("fatal: %v\n", err)
+		log.Fatalf("fatal: service: %v\n", err)
 	}
 }

@@ -1,70 +1,65 @@
 # README
 
-The signaling service establishes a bidirectional communication channel between two clients. It aims to be as simple as possible, delegating most state management to it's clients.
+This signaling service provides facilities for establishing bidirectional communication between WebRTC peers. It aims to be as simple as possible, delegating most state and identity management to clients.
 
 It does:
-1. Associate peers by using a rudimentary "room" concept.
-1. Use periodic client ping/pong to identify dead clients.
-1. Provide clients with a transient session ID specific to the signaling service.
+1. Associate peers by using a rudimentary "room" concept built around a distributed counting semaphore.
+1. Provide clients with "an anonymous peer is available" events.
+1. Provide clients with a transient session ID specific to the signaling service to allow clients with unreliable connections to rejoin their "room".
+1. Leverage a single Redis instance for all locking and messaging operations.
 
 It does not:
 1. Do auth of any kind.
-1. Support more than two peers in a room.
-1. Attempt to prevent "room hijacking" beyond using a short timeout before new clients can replace dead ones.
+1. Provide clients with "a peer disappeared" events.
+1. Attempt to prevent "room hijacking" beyond using a configurable timeout before new clients can replace dead ones.
 
-In the future, it should:
-1. Leverage auth provided by a separate mechanism.
-1. Delegate room management to a separate service.
+In the future, it could:
+1. Leverage auth provided by an external mechanism.
+1. Scale by delegating locking and messaging to separate Redis deployments, or different platforms entirely.
 
-## States
+## Service Endpoints
 
-These are the states a signaling session moves through.
+The service exposes it's endpoints via HTTP/1.x on the port specified by the `--addr` flag (default `:8080`).
 
-![Signaling Service State Diagram](signal-states.png)
+### Events
 
-The conditions required to transition between states are expanded upon below.
+Events are JSON messages in the following format:
 
-* numbered list == all of these things are true
-* bulleted list == at least one of these things are true
+```json
+{
+    "kind": "ENUM",
+    "body": "STRING"
+}
+```
 
-***CONNECTING***
-1. A client has made an HTTP request to our websocket endpoint, and we're trying to upgrade the connection.
+`kind` is a string enumeration that accepts one of these values:
+ * `PEER`: Indicates that a peer is available.
+ * `OFFER`: Indicates that the event body is an SDP offer.
+ * `ANSWER`:  Indicates that the event body is an SDP answer.
 
-***CONNECTED***
-1. A client has successfully established a websocket connection.
-1. We've supplied the client with a signaling session ID.
+`body` is an arbitrary string that should be interpreted based on the value of `kind`.
 
-***JOINING***
-1. The client has sent a "join room" request.
-1. We're trying to lock one of the two seats in a room.
+### `GET /call/{call}`
 
-***JOINED***
-1. We were able to lock one of the seats in a room.
-1. We've informed the client which seat they have.
-1. We've begun the process of subscribing to the room's pubsub channel.
+Join the room identified by `{call}` or renew the lease on a seat in the room. Clients should periodically call this endpoint to renew their lease, at an interval smaller than the value of `--seat-max-age` (default `30s`).
 
-***SUBSCRIBED***
-1. We've subscribed to the room's pubsub channel.
-1. We've connected the pubsub to the client's websocket.
-1. We've informed the client that they're subscribed.
+* Returns `200` on successful room join/renew.
+* Returns `409` when attempting to join a room that is already full.
 
-At this point, the service is just shuttling signaling messages back and forth until something happens that would transition us to a closed state.
+### `POST /call/{call}/signal`
 
-***CLOSED_ERR***
-* Signaling protocol error: (de)serialization error or bad request.
-* Timeout on read from client (either a signaling message or a pong).
-* Timeout on write to client.
-* Client sends message too large.
+Publishing peering data to other clients in room `{call}`. Data is not persistent; clients will only see data published after they've joined the room.
 
-These are worth keeping an eye on.
+* Returns `200` on a successful publish (this does not guarantee that any other clients have received the published data).
+* Returns `409` when attempting to publish to a room that the client isn't a member of.
 
-***CLOSED_OK***
-* The client has sent a "leave room" message.
-* The client has closed the connection or otherwise disappeared.
+### `GET /call/{call}/ws`
 
-These are less important to track.
+Establishes a websocket connection for receiving published peering data. Returns a `409` when attempting to subscribe to the data feed for a room that the client isn't a member of.
 
-## Signaling Protocol
+## Infrastructure Endpoints
 
-TODO
+Infrastructure endpoints are served on the port specified by the `--infra-addr` flag (default `:8090`).
 
+* `/debug`: Pprof endpoint
+* `/health`: Service healthcheck endpoint; returns `200` on a healthy service.

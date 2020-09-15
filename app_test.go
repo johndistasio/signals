@@ -41,23 +41,23 @@ func TestSplitPath_OperationSlash(t *testing.T) {
 	assert.Equal(t, "signal", op)
 }
 
-func TestEndUserMessage_Unmarshal(t *testing.T) {
+func TestEvent_Unmarshal(t *testing.T) {
 	raw := `
 {
 	"kind": "PEER",
 	"body": "test"
 }
 `
-	var eum EndUserMessage
+	var event Event
 
-	err := json.Unmarshal([]byte(raw), &eum)
+	err := json.Unmarshal([]byte(raw), &event)
 
 	assert.Nil(t, err)
-	assert.Equal(t, MessageKindPeer, eum.Kind)
-	assert.Equal(t, "test", eum.Body)
+	assert.Equal(t, MessageKindPeer, event.Kind)
+	assert.Equal(t, "test", event.Body)
 }
 
-func TestInternalMessage_Marshal(t *testing.T) {
+func TestInternalEvent_Marshal(t *testing.T) {
 	raw := `
 {
 	"kind": "PEER",
@@ -66,15 +66,15 @@ func TestInternalMessage_Marshal(t *testing.T) {
 	"callId": "testCall"
 }
 `
-	var im InternalMessage
+	var event InternalEvent
 
-	err := json.Unmarshal([]byte(raw), &im)
+	err := json.Unmarshal([]byte(raw), &event)
 
 	assert.Nil(t, err)
-	assert.Equal(t, MessageKindPeer, im.Kind)
-	assert.Equal(t, "test", im.Body)
-	assert.Equal(t, "testPeer", im.PeerId)
-	assert.Equal(t, "testCall", im.CallId)
+	assert.Equal(t, MessageKindPeer, event.Kind)
+	assert.Equal(t, "test", event.Body)
+	assert.Equal(t, "testPeer", event.PeerId)
+	assert.Equal(t, "testCall", event.CallId)
 }
 
 type SeatHandlerTestSuite struct {

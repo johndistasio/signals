@@ -141,15 +141,15 @@ func (s *SeatHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		notif := InternalMessage{
-			EndUserMessage: EndUserMessage{
+		event := InternalEvent{
+			Event: Event{
 				Kind: MessageKindPeer,
 			},
 			PeerId: session,
 			CallId: call,
 		}
 
-		bytes, _ := json.Marshal(notif)
+		bytes, _ := json.Marshal(event)
 
 		err = s.pub.Publish(ctx, call, bytes)
 
@@ -168,13 +168,13 @@ const MessageKindOffer = "OFFER"
 
 const MessageKindAnswer = "ANSWER"
 
-type EndUserMessage struct {
+type Event struct {
 	Body string `json:"body,omitempty"`
 	Kind string `json:"kind,omitempty"`
 }
 
-type InternalMessage struct {
-	EndUserMessage
+type InternalEvent struct {
+	Event
 	PeerId string `json:"peerId"`
 	CallId string `json:"callId"`
 }
@@ -227,19 +227,19 @@ func (s *SignalHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		var input EndUserMessage
+		var event Event
 
-		err = json.Unmarshal(body, &input)
+		err = json.Unmarshal(body, &event)
 
-		if err != nil || input.Body == "" || (input.Kind != MessageKindOffer && input.Kind != MessageKindAnswer) {
+		if err != nil || event.Body == "" || (event.Kind != MessageKindOffer && event.Kind != MessageKindAnswer) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
-		peerMessage := InternalMessage{
-			EndUserMessage: input,
-			PeerId:         session,
-			CallId:         call,
+		peerMessage := InternalEvent{
+			Event:  event,
+			PeerId: session,
+			CallId: call,
 		}
 
 		encoded, err := json.Marshal(peerMessage)
@@ -390,30 +390,30 @@ func onWebsocketSignal(ctx context.Context, conn *websocket.Conn, message []byte
 	span.SetTag("call.id", call)
 	span.SetTag("session.id", session)
 
-	var im InternalMessage
+	var event InternalEvent
 
-	err := json.Unmarshal(message, &im)
+	err := json.Unmarshal(message, &event)
 
 	switch {
 	case err != nil:
 		ext.LogError(span, err)
 		return
-	case im.CallId != call:
-		ext.LogError(span, errors.Errorf("received unexpected signal for call %s", im.CallId))
+	case event.CallId != call:
+		ext.LogError(span, errors.Errorf("received unexpected signal for call %s", event.CallId))
 		return
-	case im.PeerId == "":
+	case event.PeerId == "":
 		ext.LogError(span, errors.New("received signal missing peer ID"))
 		return
-	case im.Kind != MessageKindPeer && im.Kind != MessageKindOffer && im.Kind != MessageKindAnswer:
-		ext.LogError(span, errors.Errorf(`received unexpected message kind "%s" from %s:%s`, im.Kind, im.CallId, im.PeerId))
+	case event.Kind != MessageKindPeer && event.Kind != MessageKindOffer && event.Kind != MessageKindAnswer:
+		ext.LogError(span, errors.Errorf(`received unexpected message kind "%s" from %s:%s`, event.Kind, event.CallId, event.PeerId))
 		return
-	case im.PeerId == session:
+	case event.PeerId == session:
 		return
 	}
 
-	span.SetTag("call.peer.id", im.PeerId)
+	span.SetTag("call.peer.id", event.PeerId)
 
-	b, err := json.Marshal(im.EndUserMessage)
+	b, err := json.Marshal(event.Event)
 
 	if err != nil {
 		ext.LogError(span, err)
