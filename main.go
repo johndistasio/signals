@@ -23,13 +23,13 @@ var (
 	appName   = kingpin.Flag("app-name", "App name for monitoring and observability.").Envar("SIGNAL_APP_NAME").Default("signals").String()
 	devel     = kingpin.Flag("devel", "Enable development mode: set insecure cookies and ignore CORS rules.").Envar("SIGNAL_DEVEL").Bool()
 	infraAddr = kingpin.Flag("infra-addr", "Host:port for infrastructure endpoints.").Envar("SIGNAL_INFRA_ADDR").Default(":8090").TCP()
+	origin    = kingpin.Flag("origin", "Origin for CORS.").Envar("SIGNAL_ORIGIN").Default("http://localhost:8080").URL()
 
 	redisAddr = kingpin.Flag("redis-addr", "Redis host:addr.").Envar("SIGNAL_REDIS_ADDR").Default("localhost:6379").TCP()
 
 	seatCount  = kingpin.Flag("seat-count", "Max clients for signaling session.").Envar("SIGNAL_SEAT_COUNT").Default("2").Int()
 	seatMaxAge = kingpin.Flag("seat-max-age", "Max age for signaling session seat.").Envar("SIGNAL_SEAT_MAX_AGE").Default("30s").Duration()
 
-	wsOrigin       = kingpin.Flag("ws-origin", "Time between websocket client liveliness check.").Envar("SIGNAL_WS_ORIGIN").Default("http://localhost:8080").URL()
 	wsPingInterval = kingpin.Flag("ws-ping-interval", "Time between websocket client liveliness check.").Envar("SIGNAL_WS_PING_INTERVAL").Default("5s").Duration()
 	wsReadTimeout  = kingpin.Flag("ws-read-timeout", "Max time between websocket reads. Must be greater then ping interval.").Envar("SIGNAL_WS_READ_TIMEOUT").Default("10s").Duration()
 )
@@ -128,19 +128,19 @@ func main() {
 		}
 	} else {
 		fun = func(r *http.Request) bool {
-			origin := r.Header["Origin"]
+			header := r.Header["Origin"]
 
-			if len(origin) == 0 {
+			if len(header) == 0 {
 				return true
 			}
 
-			u, err := url.Parse(origin[0])
+			u, err := url.Parse(header[0])
 
 			if err != nil {
 				return false
 			}
 
-			return strings.ToLower(u.Host) == strings.ToLower((*wsOrigin).Host)
+			return strings.ToLower(u.Host) == strings.ToLower((*origin).Host)
 		}
 	}
 
@@ -155,7 +155,16 @@ func main() {
 		},
 	}
 
+	var cors string
+
+	if *devel {
+		cors = "*"
+	} else {
+		cors = (*origin).String()
+	}
+
 	app := &App{
+		Origin:           cors,
 		SessionHandler:   session,
 		SeatHandler:      seat,
 		SignalHandler:    signal,

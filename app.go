@@ -48,6 +48,7 @@ func (w *AppResponseWriter) Header() http.Header {
 }
 
 type App struct {
+	Origin           string
 	SessionHandler   *SessionHandler
 	SeatHandler      AppHandler
 	SignalHandler    AppHandler
@@ -77,6 +78,8 @@ func (s *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	span := tracer.StartSpan("App.ServeHTTP", ext.RPCServerOption(spanCtx))
 	ctx := opentracing.ContextWithSpan(r.Context(), span)
 	defer span.Finish()
+
+	w.Header().Set("Access-Control-Allow-Origin", s.Origin)
 
 	ext.HTTPUrl.Set(span, r.URL.String())
 	ext.HTTPMethod.Set(span, r.Method)
