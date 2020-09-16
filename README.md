@@ -43,17 +43,18 @@ Events are JSON messages in the following format:
 
 Join the room identified by `{call}` or renew the lease on a seat in the room. Clients should periodically call this endpoint to renew their lease, at an interval smaller than the value of `--seat-max-age` (default `30s`).
 
-* Returns `200` on successful room join/renew.
-* Returns `409` when attempting to join a room that is already full.
+This endpoint returns `204` and a seat token in the `Seat` header on success.
 
-### `POST /call/{call}/signal`
+A `409` is returned if there are no free seats.
+
+### `POST /signal/{call}`
 
 Publishing peering data to other clients in room `{call}`. Data is not persistent; clients will only see data published after they've joined the room.
 
 * Returns `200` on a successful publish (this does not guarantee that any other clients have received the published data).
 * Returns `409` when attempting to publish to a room that the client isn't a member of.
 
-### `GET /call/{call}/ws`
+### `GET /ws/{call}`
 
 Establishes a websocket connection for receiving published peering data as events (see above). Returns a `409` when attempting to subscribe to the data feed for a room that the client isn't a member of.
 
