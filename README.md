@@ -47,14 +47,14 @@ This endpoint returns `204` and a seat token in the `Seat` header on success.
 
 A `409` is returned if there are no free seats.
 
-### `POST /call/{call}/signal`
+### `POST /signal/{call}`
 
 Publishing peering data to other clients in room `{call}`. Data is not persistent; clients will only see data published after they've joined the room.
 
 * Returns `200` on a successful publish (this does not guarantee that any other clients have received the published data).
 * Returns `409` when attempting to publish to a room that the client isn't a member of.
 
-### `GET /call/{call}/ws`
+### `GET /ws/{call}`
 
 Establishes a websocket connection for receiving published peering data as events (see above). Returns a `409` when attempting to subscribe to the data feed for a room that the client isn't a member of.
 
