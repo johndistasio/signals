@@ -6,25 +6,17 @@ import (
 	"net/http"
 )
 
-var CallHandler = func(lock Semaphore, pub Publisher) http.Handler {
+type SeatHandler struct {
+	Lock Semaphore
+	Pub  Publisher
+}
+
+func (s *SeatHandler) Handle(callId string, sessionId string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		span, ctx := opentracing.StartSpanFromContext(r.Context(), "CallHandler")
+		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SeatHandler")
 		defer span.Finish()
 
-		call, seat := ExtractParams(ctx, r)
-
-		if call == "" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		if seat == "" {
-			seat = GenerateSessionId(ctx)
-		}
-
-		span.SetTag("seat", seat)
-
-		acq, err := lock.Acquire(ctx, call, seat)
+		acq, err := s.Lock.Acquire(ctx, callId, sessionId)
 
 		if err != nil {
 			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
@@ -40,19 +32,18 @@ var CallHandler = func(lock Semaphore, pub Publisher) http.Handler {
 			Event: Event{
 				Kind: MessageKindPeer,
 			},
-			PeerId: seat,
-			CallId: call,
+			PeerId: sessionId,
+			CallId: callId,
 		})
 
-		err = pub.Publish(ctx, call, event)
+		err = s.Pub.Publish(ctx, callId, event)
 
 		if err != nil {
-			_ = lock.Release(ctx, call, seat)
+			_ = s.Lock.Release(ctx, callId, sessionId)
 			http.Error(w, "publisher backend unavailable", http.StatusInternalServerError)
 			return
 		}
 
-		w.Header().Set(SeatHeader, seat)
 		w.WriteHeader(http.StatusNoContent)
 	})
 }

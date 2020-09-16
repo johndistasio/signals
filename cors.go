@@ -3,37 +3,34 @@ package main
 import (
 	"github.com/opentracing/opentracing-go"
 	"net/http"
-	"sort"
 	"strings"
 )
 
-var CORSHandler = func(next http.Handler, origin string, methods ...string) http.Handler {
-	var options bool
+type CORSHandler struct {
+	Origin string
+}
 
-	for i, val := range methods {
-		methods[i] = strings.ToUpper(val)
-
-		if methods[i] == "OPTIONS" {
-			options = true
-		}
+func (c *CORSHandler) Handle(next http.Handler, methods ...string) http.Handler {
+	if len(methods) < 1 {
+		methods = []string{"GET"}
 	}
 
-	if !options {
-		methods = append(methods, "OPTIONS")
+	methodsHash := make(map[string]int)
+
+	for _, val := range methods {
+		methodsHash[strings.ToUpper(val)] = 1
 	}
 
-	sort.Strings(methods)
-
-	m := strings.Join(methods, ", ")
+	methodsString := strings.Join(methods, ", ") + ", OPTIONS"
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, ctx := opentracing.StartSpanFromContext(r.Context(), "CORSHandler")
 		defer span.Finish()
 
-		w.Header().Set("Access-Control-Allow-Headers", SeatHeader)
-		w.Header().Set("Access-Control-Allow-Methods", m)
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Expose-Headers", SeatHeader)
+		w.Header().Set("Access-Control-Allow-Headers", SessionHeader)
+		w.Header().Set("Access-Control-Allow-Methods", methodsString)
+		w.Header().Set("Access-Control-Allow-Origin", c.Origin)
+		w.Header().Set("Access-Control-Expose-Headers", SessionHeader)
 		w.Header().Set("Access-Control-Max-Age", "60")
 
 		if r.Method == "OPTIONS" {
@@ -41,15 +38,7 @@ var CORSHandler = func(next http.Handler, origin string, methods ...string) http
 			return
 		}
 
-		var allowed bool
-
-		for _, method := range methods {
-			if method == r.Method {
-				allowed = true
-			}
-		}
-
-		if !allowed {
+		if methodsHash[r.Method] != 1 {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}

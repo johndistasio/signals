@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
@@ -9,31 +8,24 @@ import (
 	"net/http"
 )
 
-func ExtractParams(ctx context.Context, r *http.Request) (string, string) {
-	_, call, _ := SplitPath(r.URL.Path)
-
-	seat := r.Header.Get("Seat")
-
-	if !ParseSessionId(ctx, seat) {
-		seat = ""
-	}
-
-	return call, seat
+type SignalHandler struct {
+	Lock      Semaphore
+	Publisher Publisher
+	MaxRead   int64
 }
 
-var SignalHandler2 = func(lock Semaphore, pub Publisher) http.Handler {
+func (s *SignalHandler) Handle(callId string, sessionId string) http.Handler {
+	readLimit := s.MaxRead
+
+	if readLimit == 0 {
+		readLimit = 512
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SignalHandler")
 		defer span.Finish()
 
-		call, seat := ExtractParams(ctx, r)
-
-		if call == "" || seat == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		acq, err := lock.Check(ctx, call, seat)
+		acq, err := s.Lock.Check(ctx, callId, sessionId)
 
 		if err != nil {
 			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
@@ -45,8 +37,7 @@ var SignalHandler2 = func(lock Semaphore, pub Publisher) http.Handler {
 			return
 		}
 
-		// TODO make limit configurable
-		body, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, 512))
+		body, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, readLimit))
 
 		if err != nil {
 			ext.LogError(span, err)
@@ -70,8 +61,8 @@ var SignalHandler2 = func(lock Semaphore, pub Publisher) http.Handler {
 
 		peerMessage := InternalEvent{
 			Event:  event,
-			PeerId: seat,
-			CallId: call,
+			PeerId: sessionId,
+			CallId: callId,
 		}
 
 		encoded, err := json.Marshal(peerMessage)
@@ -82,7 +73,7 @@ var SignalHandler2 = func(lock Semaphore, pub Publisher) http.Handler {
 			return
 		}
 
-		err = pub.Publish(ctx, call, encoded)
+		err = s.Publisher.Publish(ctx, callId, encoded)
 
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -90,4 +81,3 @@ var SignalHandler2 = func(lock Semaphore, pub Publisher) http.Handler {
 		}
 	})
 }
-

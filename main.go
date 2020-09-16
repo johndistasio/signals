@@ -5,23 +5,14 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
 	"github.com/opentracing/opentracing-go"
-	"github.com/uber/jaeger-client-go"
-	jaegerConfig "github.com/uber/jaeger-client-go/config"
-	jaegerLog "github.com/uber/jaeger-client-go/log"
-	jaegerMetrics "github.com/uber/jaeger-lib/metrics"
 	"gopkg.in/alecthomas/kingpin.v2"
-	"io"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
-	"net/url"
-	"strings"
 )
 
 var (
 	addr      = kingpin.Flag("addr", "Host:port for service endpoints.").Envar("SIGNAL_ADDR").Default(":8080").TCP()
-	appName   = kingpin.Flag("app-name", "App name for monitoring and observability.").Envar("SIGNAL_APP_NAME").Default("signals").String()
-	devel     = kingpin.Flag("devel", "Enable development mode: set insecure cookies and ignore CORS rules.").Envar("SIGNAL_DEVEL").Bool()
 	infraAddr = kingpin.Flag("infra-addr", "Host:port for infrastructure endpoints.").Envar("SIGNAL_INFRA_ADDR").Default(":8090").TCP()
 	origin    = kingpin.Flag("origin", "Origin for CORS.").Envar("SIGNAL_ORIGIN").Default("http://localhost:8080").URL()
 
@@ -34,38 +25,10 @@ var (
 	wsReadTimeout  = kingpin.Flag("ws-read-timeout", "Max time between websocket reads. Must be greater then ping interval.").Envar("SIGNAL_WS_READ_TIMEOUT").Default("10s").Duration()
 )
 
-func initTracer() (opentracing.Tracer, io.Closer, error) {
-	// Sample configuration for testing. Use constant sampling to sample every trace
-	// and enable LogSpan to log every span via configured Logger.
-	cfg := jaegerConfig.Configuration{
-		ServiceName: *appName,
-		Sampler: &jaegerConfig.SamplerConfig{
-			Type:  jaeger.SamplerTypeConst,
-			Param: 1,
-		},
-		Reporter: &jaegerConfig.ReporterConfig{
-			LogSpans: false,
-		},
-	}
-
-	// Example logger and metrics factory. Use github.com/uber/jaeger-client-go/log
-	// and github.com/uber/jaeger-lib/metrics respectively to bind to real logging and metrics
-	// frameworks.
-	jLogger := jaegerLog.StdLogger
-	jMetricsFactory := jaegerMetrics.NullFactory
-
-	// Initialize tracer with a logger and a metrics factory
-	return cfg.NewTracer(
-		jaegerConfig.Logger(jLogger),
-		jaegerConfig.Metrics(jMetricsFactory),
-	)
-}
-
 func main() {
 	kingpin.Parse()
 
-	// TODO config
-	tracer, closer, err := initTracer()
+	tracer, closer, err := initTracer("signals")
 
 	if err != nil {
 		log.Fatalf("fatal: tracer init: %v\n", err)
@@ -91,10 +54,12 @@ func main() {
 			http.Error(w, "unhealthy", http.StatusInternalServerError)
 			return
 		}
+
+		w.WriteHeader(http.StatusOK)
 	}))
 
 	go func() {
-		log.Printf("Starting %s infra server on %s\n", *appName, (*infraAddr).String())
+		log.Printf("Starting signals infra server on %s\n", (*infraAddr).String())
 		err := http.ListenAndServe((*infraAddr).String(), nil)
 
 		if err != nil {
@@ -110,85 +75,51 @@ func main() {
 
 	publisher := &RedisPublisher{rdb}
 
-	session := &SessionHandler{
-		Insecure:          *devel,
-		Javascript:        false,
+	mux := NewTracingMux()
+
+	corsHandler := &CORSHandler{(*origin).String()}
+
+	sessionHandler := &SessionHandler{
+		ExtractCallId:     ExtractCallId,
 		CreateSessionId:   GenerateSessionId,
 		ValidateSessionId: ParseSessionId,
 	}
 
-	signal := &SignalHandler{locker, publisher}
+	callHandler := corsHandler.Handle(
+		sessionHandler.Handle(
+			&SeatHandler{locker, publisher}))
 
-	var fun func(r *http.Request) bool
+	signalHandler := corsHandler.Handle(
+		sessionHandler.Handle(
+			&SignalHandler{locker, publisher, 512}), "POST")
 
-	if *devel {
-		fun = func(*http.Request) bool {
-			return true
-		}
-	} else {
-		fun = func(r *http.Request) bool {
-			header := r.Header["Origin"]
+	wsHandler := corsHandler.Handle(
+		sessionHandler.Handle(
+			&WebsocketHandler{
+				lock:         locker,
+				redis:        rdb,
+				readTimeout:  *wsReadTimeout,
+				pingInterval: *wsPingInterval,
 
-			if len(header) == 0 {
-				return true
-			}
-
-			u, err := url.Parse(header[0])
-
-			if err != nil {
-				return false
-			}
-
-			return strings.ToLower(u.Host) == strings.ToLower((*origin).Host)
-		}
-	}
-
-	ws := &WebsocketHandler{
-		lock:         locker,
-		redis:        rdb,
-		readTimeout:  *wsReadTimeout,
-		pingInterval: *wsPingInterval,
-
-		upgrader: websocket.Upgrader{
-			CheckOrigin: fun,
-		},
-	}
-
-	var cors string
-
-	if *devel {
-		cors = "*"
-	} else {
-		cors = (*origin).String()
-	}
-
-	_ = &App{
-		Origin:           cors,
-		SessionHandler:   session,
-		SignalHandler:    signal,
-		WebsocketHandler: ws,
-	}
-
-	mux := http.NewServeMux()
-
-	callHandler := TraceHandler(CORSHandler(CallHandler(locker, publisher), cors, "GET"),"/call/{call}")
-
-	signalHandler := TraceHandler(CORSHandler(SignalHandler2(locker, publisher), cors, "POST"),"/signal/{call}")
+				// TODO expose more of this configuration via flags
+				upgrader: websocket.Upgrader{
+					// Delegate XSS prevention to CORSHandler.
+					CheckOrigin: func(*http.Request) bool { return true },
+				},
+			}))
 
 	mux.Handle("/call/", callHandler)
 	mux.Handle("/signal/", signalHandler)
-
-	//mux.Handle("/", app)
+	mux.Handle("/ws/", wsHandler)
 
 	server := &http.Server{
 		Addr:    (*addr).String(),
 		Handler: mux,
 	}
 
-	log.Printf("Starting %s server on %s\n", *appName, (*addr).String())
-	err = server.ListenAndServe()
+	log.Printf("Starting signals server on %s\n", (*addr).String())
 
-	if err != nil {
-		log.Fatalf("fatal: service: %v\n", err)
+	if err = server.ListenAndServe(); err != nil {
+		log.Fatalf("fatal: signals: %v\n", err)
 	}
 }
