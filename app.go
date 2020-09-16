@@ -117,6 +117,8 @@ func (s *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ext.HTTPStatusCode.Set(span, uint16(arw.code))
 }
 
+const SeatHeader = "X-Seat"
+
 type SeatHandler struct {
 	lock Semaphore
 	pub  Publisher
@@ -144,20 +146,31 @@ func (s *SeatHandler) Handle(session string, call string) http.Handler {
 			return
 		}
 
-		event := InternalEvent{
+		event, _ := json.Marshal(InternalEvent{
 			Event: Event{
 				Kind: MessageKindPeer,
 			},
 			PeerId: session,
 			CallId: call,
-		}
+		})
 
-		bytes, _ := json.Marshal(event)
-
-		err = s.pub.Publish(ctx, call, bytes)
+		err = s.pub.Publish(ctx, call, event)
 
 		if err != nil {
+			_ = s.lock.Release(ctx, call, session)
 			http.Error(w, "publisher backend unavailable", http.StatusInternalServerError)
+			return
+		}
+
+		seat, _ := json.Marshal(struct{
+			Seat string `json:"seat"`
+		}{session})
+
+		_, err = w.Write(seat)
+
+		if err != nil {
+			_ = s.lock.Release(ctx, call, session)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 

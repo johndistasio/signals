@@ -43,8 +43,13 @@ Events are JSON messages in the following format:
 
 Join the room identified by `{call}` or renew the lease on a seat in the room. Clients should periodically call this endpoint to renew their lease, at an interval smaller than the value of `--seat-max-age` (default `30s`).
 
-* Returns `200` on successful room join/renew.
-* Returns `409` when attempting to join a room that is already full.
+On success, this endpoint returns `200` and a seat token in a JSON object:
+
+```json
+{"seat": "token"}
+```
+
+A `409` is returned if there are no free seats.
 
 ### `POST /call/{call}/signal`
 
