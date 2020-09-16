@@ -117,7 +117,6 @@ func main() {
 		ValidateSessionId: ParseSessionId,
 	}
 
-	seat := &SeatHandler{locker, publisher}
 	signal := &SignalHandler{locker, publisher}
 
 	var fun func(r *http.Request) bool
@@ -163,16 +162,23 @@ func main() {
 		cors = (*origin).String()
 	}
 
-	app := &App{
+	_ = &App{
 		Origin:           cors,
 		SessionHandler:   session,
-		SeatHandler:      seat,
 		SignalHandler:    signal,
 		WebsocketHandler: ws,
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/", app)
+
+	callHandler := TraceHandler(CORSHandler(CallHandler(locker, publisher), cors, "GET"),"/call/{call}")
+
+	signalHandler := TraceHandler(CORSHandler(SignalHandler2(locker, publisher), cors, "POST"),"/signal/{call}")
+
+	mux.Handle("/call/", callHandler)
+	mux.Handle("/signal/", signalHandler)
+
+	//mux.Handle("/", app)
 
 	server := &http.Server{
 		Addr:    (*addr).String(),

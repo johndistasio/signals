@@ -77,66 +77,6 @@ func TestInternalEvent_Marshal(t *testing.T) {
 	assert.Equal(t, "testCall", event.CallId)
 }
 
-type SeatHandlerTestSuite struct {
-	suite.Suite
-	mockLock      *mock.Call
-	mockPublisher *mock.Call
-	server        *httptest.Server
-}
-
-func (suite *SeatHandlerTestSuite) SetupTest() {
-	lock := new(mocks.Semaphore)
-	suite.mockLock = lock.On("Acquire", mock.Anything, "test", "test")
-
-	pub := new(mocks.Publisher)
-	suite.mockPublisher = pub.On("Publish", mock.Anything, "test", mock.Anything)
-
-	handler := (&SeatHandler{lock: lock, pub: pub}).Handle("test", "test")
-
-	suite.server = httptest.NewServer(handler)
-}
-
-func (suite *SeatHandlerTestSuite) TearDownTest() {
-	suite.server.Close()
-}
-
-func TestSeatHandlerTestSuite(t *testing.T) {
-	suite.Run(t, new(SeatHandlerTestSuite))
-}
-
-func (suite *SeatHandlerTestSuite) TestHandle() {
-	suite.mockLock.Return(true, nil)
-	suite.mockPublisher.Return(nil)
-
-	r, _ := http.Get(suite.server.URL)
-	suite.Equal(http.StatusOK, r.StatusCode)
-}
-
-func (suite *SeatHandlerTestSuite) TestSeatError() {
-	suite.mockLock.Return(true, errors.New("test"))
-	r, _ := http.Get(suite.server.URL)
-	suite.Equal(http.StatusInternalServerError, r.StatusCode)
-}
-
-func (suite *SeatHandlerTestSuite) TestSeatConflict() {
-	suite.mockLock.Return(false, nil)
-	r, _ := http.Get(suite.server.URL)
-	suite.Equal(http.StatusConflict, r.StatusCode)
-}
-
-func (suite *SeatHandlerTestSuite) TestMethodNotAllowed() {
-	suite.mockLock.Return(true, nil)
-
-	methods := []string{"CONNECT", "DELETE", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE"}
-
-	for _, method := range methods {
-		req, _ := http.NewRequest(method, suite.server.URL, nil)
-		res, _ := (&http.Client{}).Do(req)
-
-		suite.Equal(http.StatusMethodNotAllowed, res.StatusCode)
-	}
-}
-
 type SignalHandlerTestSuite struct {
 	suite.Suite
 	body          *strings.Reader

@@ -117,66 +117,7 @@ func (s *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ext.HTTPStatusCode.Set(span, uint16(arw.code))
 }
 
-const SeatHeader = "X-Seat"
-
-type SeatHandler struct {
-	lock Semaphore
-	pub  Publisher
-}
-
-func (s *SeatHandler) Handle(session string, call string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SeatHandler.Handle")
-		defer span.Finish()
-
-		if r.Method != "GET" {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
-		acq, err := s.lock.Acquire(ctx, call, session)
-
-		if err != nil {
-			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
-			return
-		}
-
-		if !acq {
-			w.WriteHeader(http.StatusConflict)
-			return
-		}
-
-		event, _ := json.Marshal(InternalEvent{
-			Event: Event{
-				Kind: MessageKindPeer,
-			},
-			PeerId: session,
-			CallId: call,
-		})
-
-		err = s.pub.Publish(ctx, call, event)
-
-		if err != nil {
-			_ = s.lock.Release(ctx, call, session)
-			http.Error(w, "publisher backend unavailable", http.StatusInternalServerError)
-			return
-		}
-
-		seat, _ := json.Marshal(struct{
-			Seat string `json:"seat"`
-		}{session})
-
-		_, err = w.Write(seat)
-
-		if err != nil {
-			_ = s.lock.Release(ctx, call, session)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-	})
-}
+const SeatHeader = "Seat"
 
 const MessageKindPeer = "PEER"
 
