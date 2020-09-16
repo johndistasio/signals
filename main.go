@@ -77,7 +77,15 @@ func main() {
 
 	mux := NewTracingMux()
 
-	corsHandler := &CORSHandler{(*origin).String()}
+	corsHandler := &CORSHandler{
+		Origin: (*origin).String(),
+		Headers: []string{
+			SessionHeader,
+			"Cache-Control",
+			"Content-Type",
+			"User-Agent",
+		},
+	}
 
 	sessionHandler := &SessionHandler{
 		ExtractCallId:     ExtractCallId,

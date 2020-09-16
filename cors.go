@@ -7,7 +7,8 @@ import (
 )
 
 type CORSHandler struct {
-	Origin string
+	Origin  string
+	Headers []string
 }
 
 func (c *CORSHandler) Handle(next http.Handler, methods ...string) http.Handler {
@@ -23,14 +24,16 @@ func (c *CORSHandler) Handle(next http.Handler, methods ...string) http.Handler 
 
 	methodsString := strings.Join(methods, ", ") + ", OPTIONS"
 
+	headersString := strings.Join(c.Headers, ", ")
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		span, ctx := opentracing.StartSpanFromContext(r.Context(), "CORSHandler")
 		defer span.Finish()
 
-		w.Header().Set("Access-Control-Allow-Headers", SessionHeader)
+		w.Header().Set("Access-Control-Allow-Headers", headersString)
 		w.Header().Set("Access-Control-Allow-Methods", methodsString)
 		w.Header().Set("Access-Control-Allow-Origin", c.Origin)
-		w.Header().Set("Access-Control-Expose-Headers", SessionHeader)
+		w.Header().Set("Access-Control-Expose-Headers", headersString)
 		w.Header().Set("Access-Control-Max-Age", "60")
 
 		if r.Method == "OPTIONS" {

@@ -10,7 +10,7 @@ import (
 var NoopHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 
 func TestCORSHandler (t *testing.T) {
-	handler := (&CORSHandler{"*"}).Handle(NoopHandler)
+	handler := (&CORSHandler{"*", []string{SessionHeader}}).Handle(NoopHandler)
 
 	req := httptest.NewRequest("GET", "http://example.com/foo", nil)
 	w := httptest.NewRecorder()
@@ -28,7 +28,7 @@ func TestCORSHandler (t *testing.T) {
 }
 
 func TestCORSHandler_Options(t *testing.T) {
-	handler := (&CORSHandler{"*"}).Handle(NoopHandler)
+	handler := (&CORSHandler{"*", []string{SessionHeader}}).Handle(NoopHandler)
 
 	req := httptest.NewRequest("OPTIONS", "http://example.com/foo", nil)
 	w := httptest.NewRecorder()
@@ -39,7 +39,7 @@ func TestCORSHandler_Options(t *testing.T) {
 }
 
 func TestCORSHandler_DisallowedMethod (t *testing.T) {
-	handler := (&CORSHandler{"*"}).Handle(NoopHandler, "TRACE")
+	handler := (&CORSHandler{"*", []string{SessionHeader}}).Handle(NoopHandler, "TRACE")
 
 	req := httptest.NewRequest("POST", "http://example.com/foo", nil)
 	w := httptest.NewRecorder()
