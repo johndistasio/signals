@@ -57,20 +57,34 @@ func (wh *WebsocketHandler) Handle(callId string, sessionId string) http.Handler
 			return
 		}
 
-		go onWebsocket(wh.pingInterval, wh.readTimeout, conn, pubsub, callId, sessionId)
+		ws := &WebsocketSession{
+			readTimeout:  wh.readTimeout,
+			pingInterval: wh.pingInterval,
+			conn:         conn,
+			pubsub:       pubsub,
+		}
+
+		go ws.onWebsocket(callId, sessionId)
 	})
 }
 
+type WebsocketSession struct {
+	readTimeout  time.Duration
+	pingInterval time.Duration
+	conn         *websocket.Conn
+	pubsub       *redis.PubSub
+}
+
 // This function handles the complexity of managing the websocket connection and shuttling messages to the client.
-func onWebsocket(pingInterval time.Duration, readTimeout time.Duration, conn *websocket.Conn, pubsub *redis.PubSub, callId string, sessionId string) {
+func (ws *WebsocketSession) onWebsocket(callId string, sessionId string) {
 	// Initialize a ticket for sending ping messages to the client; we'll use this to detect dead clients.
-	ticker := time.NewTicker(pingInterval)
+	ticker := time.NewTicker(ws.pingInterval)
 
 	// Clean up resources upon returning from this function. Any goroutines spawned by this function should tie their
 	// lifecycle to the connection or the pubsub so as to avoid leaks.
 	defer func() {
-		_ = conn.Close()
-		_ = pubsub.Close()
+		_ = ws.conn.Close()
+		_ = ws.pubsub.Close()
 		ticker.Stop()
 	}()
 
@@ -78,20 +92,20 @@ func onWebsocket(pingInterval time.Duration, readTimeout time.Duration, conn *we
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Set an initial read deadline. The connection will be closed if we don't receive a pong within this time frame.
-	_ = conn.SetReadDeadline(time.Now().Add(readTimeout))
+	_ = ws.conn.SetReadDeadline(time.Now().Add(ws.readTimeout))
 
 	// Handle pong messages from the client, resetting the read deadline.
-	conn.SetPongHandler(func(appData string) error {
+	ws.conn.SetPongHandler(func(appData string) error {
 		// Reset the read deadline upon receiving a ping.
-		return conn.SetReadDeadline(time.Now().Add(readTimeout))
+		return ws.conn.SetReadDeadline(time.Now().Add(ws.readTimeout))
 	})
 
 	// Handle close messages or disconnects from the client. Duplicates the default close message handler, but calls our
 	// cancel function.
-	conn.SetCloseHandler(func(code int, text string) error {
+	ws.conn.SetCloseHandler(func(code int, text string) error {
 		cancel()
 		message := websocket.FormatCloseMessage(code, "")
-		_ = conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
+		_ = ws.conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
 		return nil
 	})
 
@@ -102,20 +116,20 @@ func onWebsocket(pingInterval time.Duration, readTimeout time.Duration, conn *we
 
 		// Ensure control messages are processed.
 		for {
-			if _, _, err := conn.NextReader(); err != nil {
+			if _, _, err := ws.conn.NextReader(); err != nil {
 				return
 			}
 		}
 	}()
 
-	ch := pubsub.Channel()
+	ch := ws.pubsub.Channel()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(1*time.Second))
+			err := ws.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(1*time.Second))
 
 			if err != nil {
 				return
@@ -126,12 +140,12 @@ func onWebsocket(pingInterval time.Duration, readTimeout time.Duration, conn *we
 				return
 			}
 
-			onWebsocketSignal(ctx, conn, []byte(msg.Payload), callId, sessionId)
+			ws.onWebsocketSignal(ctx, []byte(msg.Payload), callId, sessionId)
 		}
 	}
 }
 
-func onWebsocketSignal(ctx context.Context, conn *websocket.Conn, message []byte, callId string, sessionId string) {
+func (ws *WebsocketSession) onWebsocketSignal(ctx context.Context, message []byte, callId string, sessionId string) {
 	span, _ := opentracing.StartSpanFromContext(ctx, "onWebsocketSignal")
 	defer span.Finish()
 
@@ -168,7 +182,7 @@ func onWebsocketSignal(ctx context.Context, conn *websocket.Conn, message []byte
 		return
 	}
 
-	err = conn.WriteMessage(websocket.TextMessage, b)
+	err = ws.conn.WriteMessage(websocket.TextMessage, b)
 
 	if err != nil {
 		ext.LogError(span, err)
