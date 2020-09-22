@@ -21,8 +21,10 @@ var (
 	seatCount  = kingpin.Flag("seat-count", "Max clients for signaling session.").Envar("SIGNAL_SEAT_COUNT").Default("2").Int()
 	seatMaxAge = kingpin.Flag("seat-max-age", "Max age for signaling session seat.").Envar("SIGNAL_SEAT_MAX_AGE").Default("30s").Duration()
 
-	wsPingInterval = kingpin.Flag("ws-ping-interval", "Time between websocket client liveliness check.").Envar("SIGNAL_WS_PING_INTERVAL").Default("5s").Duration()
-	wsReadTimeout  = kingpin.Flag("ws-read-timeout", "Max time between websocket reads. Must be greater then ping interval.").Envar("SIGNAL_WS_READ_TIMEOUT").Default("10s").Duration()
+	wsHandshakeTimeout = kingpin.Flag("ws-handshake-timeout", "Max time for websocket upgrade handshake.").Envar("SIGNAL_WS_HANDSHAKE_TIMEOUT").Default("0s").Duration()
+	wsJoinTimeout      = kingpin.Flag("ws-join-timeout", "Max time for call join handshake.").Envar("SIGNAL_WS_JOIN_TIMEOUT").Default("0s").Duration()
+	wsPingInterval     = kingpin.Flag("ws-ping-interval", "Time between websocket client liveliness check.").Envar("SIGNAL_WS_PING_INTERVAL").Default("5s").Duration()
+	wsReadTimeout      = kingpin.Flag("ws-read-timeout", "Max time between websocket reads. Must be greater then ping interval.").Envar("SIGNAL_WS_READ_TIMEOUT").Default("10s").Duration()
 )
 
 func main() {
@@ -102,23 +104,23 @@ func main() {
 			&SignalHandler{locker, publisher, 512}), "POST")
 
 	wsHandler := corsHandler.Handle(
-		sessionHandler.Handle(
-			&WebsocketHandler{
-				lock:         locker,
-				redis:        rdb,
-				readTimeout:  *wsReadTimeout,
-				pingInterval: *wsPingInterval,
+		&WebsocketHandler{
+			lock:         locker,
+			redis:        rdb,
+			joinTimeout:  *wsJoinTimeout,
+			readTimeout:  *wsReadTimeout,
+			pingInterval: *wsPingInterval,
 
-				// TODO expose more of this configuration via flags
-				upgrader: websocket.Upgrader{
-					// Delegate XSS prevention to CORSHandler.
-					CheckOrigin: func(*http.Request) bool { return true },
-				},
-			}))
+			upgrader: websocket.Upgrader{
+				// Delegate XSS prevention to CORSHandler.
+				CheckOrigin:      func(*http.Request) bool { return true },
+				HandshakeTimeout: *wsHandshakeTimeout,
+			},
+		})
 
 	mux.Handle("/call/", callHandler)
 	mux.Handle("/signal/", signalHandler)
-	mux.Handle("/ws/", wsHandler)
+	mux.Handle("/ws", wsHandler)
 
 	server := &http.Server{
 		Addr:    (*addr).String(),

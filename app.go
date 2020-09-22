@@ -17,8 +17,7 @@ type Event struct {
 	Kind    string `json:"kind,omitempty"`
 }
 
-type InternalEvent struct {
+type PeerEvent struct {
 	Event
-	PeerId string `json:"peerId"`
-	CallId string `json:"callId"`
+	Peer string `json:"peer"`
 }

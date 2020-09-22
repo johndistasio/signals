@@ -59,10 +59,12 @@ func (s *SignalHandler) Handle(callId string, sessionId string) http.Handler {
 			return
 		}
 
-		peerMessage := InternalEvent{
-			Event:  event,
-			PeerId: sessionId,
-			CallId: callId,
+		// TODO this client should provide this
+		event.Call = callId
+
+		peerMessage := PeerEvent{
+			Event: event,
+			Peer:  sessionId,
 		}
 
 		encoded, err := json.Marshal(peerMessage)

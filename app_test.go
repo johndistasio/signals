@@ -21,7 +21,7 @@ func TestEvent_Unmarshal(t *testing.T) {
 func TestInternalEvent_Marshal(t *testing.T) {
 	raw := `{"kind": "PEER", "body": "test", "peerId": "testPeer", "callId": "testCall"}`
 
-	var event InternalEvent
+	var event PeerEvent
 
 	err := json.Unmarshal([]byte(raw), &event)
 
