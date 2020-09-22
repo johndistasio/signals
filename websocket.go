@@ -8,7 +8,9 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"github.com/pkg/errors"
+	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -62,9 +64,11 @@ func (wh *WebsocketHandler) Handle(callId string, sessionId string) http.Handler
 			pingInterval: wh.pingInterval,
 			conn:         conn,
 			pubsub:       pubsub,
+			callId:       callId,
+			mu:           new(sync.Mutex),
 		}
 
-		go ws.onWebsocket(callId, sessionId)
+		go ws.onWebsocket(sessionId)
 	})
 }
 
@@ -73,10 +77,12 @@ type WebsocketSession struct {
 	pingInterval time.Duration
 	conn         *websocket.Conn
 	pubsub       *redis.PubSub
+	callId       string
+	mu           *sync.Mutex
 }
 
 // This function handles the complexity of managing the websocket connection and shuttling messages to the client.
-func (ws *WebsocketSession) onWebsocket(callId string, sessionId string) {
+func (ws *WebsocketSession) onWebsocket(sessionId string) {
 	// Initialize a ticket for sending ping messages to the client; we'll use this to detect dead clients.
 	ticker := time.NewTicker(ws.pingInterval)
 
@@ -92,7 +98,7 @@ func (ws *WebsocketSession) onWebsocket(callId string, sessionId string) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Set an initial read deadline. The connection will be closed if we don't receive a pong within this time frame.
-	_ = ws.conn.SetReadDeadline(time.Now().Add(ws.readTimeout))
+	_ = ws.conn.SetReadDeadline(time.Now().Add(ws.readTimeout * 2))
 
 	// Handle pong messages from the client, resetting the read deadline.
 	ws.conn.SetPongHandler(func(appData string) error {
@@ -109,14 +115,31 @@ func (ws *WebsocketSession) onWebsocket(callId string, sessionId string) {
 		return nil
 	})
 
+	clientCh := make(chan Event)
+
 	go func() {
 		// Closing the socket is going to mess up writes, so we call our cancel func to bail on the main websocket
 		// handler loop. Called in a defer to ensure this happens even in the case of panics.
 		defer cancel()
+		defer close(clientCh)
 
 		// Ensure control messages are processed.
 		for {
-			if _, _, err := ws.conn.NextReader(); err != nil {
+			/*
+				if _, _, err := ws.conn.NextReader(); err != nil {
+					return
+				}
+			*/
+
+			_, message, err := ws.conn.ReadMessage()
+
+			if err != nil {
+				return
+			}
+
+			err = ws.onClientSignal(ctx, message, sessionId, clientCh)
+
+			if err != nil {
 				return
 			}
 		}
@@ -140,17 +163,63 @@ func (ws *WebsocketSession) onWebsocket(callId string, sessionId string) {
 				return
 			}
 
-			ws.onWebsocketSignal(ctx, []byte(msg.Payload), callId, sessionId)
+			ws.onPeerSignal(ctx, []byte(msg.Payload), sessionId)
+		case msg, ok := <-clientCh:
+			if !ok {
+				// This channel will close when the reader experiences an error.
+				return
+			}
+
+			log.Printf("received %v\n", msg)
+
 		}
 	}
 }
 
-func (ws *WebsocketSession) onWebsocketSignal(ctx context.Context, message []byte, callId string, sessionId string) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "onWebsocketSignal")
+func (ws *WebsocketSession) onClientSignal(ctx context.Context, message []byte, sessionId string, ch chan Event) error {
+	span, _ := opentracing.StartSpanFromContext(ctx, "WebsocketSession.onClientSignal")
 	defer span.Finish()
 
-	span.SetTag("call.id", callId)
 	span.SetTag("session.id", sessionId)
+
+	var event Event
+
+	err := json.Unmarshal(message, &event)
+
+	if err != nil {
+		ext.LogError(span, err)
+		return err
+	}
+
+	span.SetTag("event.kind", event.Kind)
+	span.SetTag("call.id", event.Call)
+
+	switch {
+	case event.Kind != MessageKindJoin:
+		err = errors.Errorf(`received unexpected event kind "%s"`, event.Kind)
+	case event.Call == "":
+		err = errors.Errorf("received event with empty call id")
+	case event.Session != sessionId:
+		err = errors.Errorf(`received unexpected session id "%s"`, event.Session)
+	default:
+		// TODO validate the event
+		ch <- event
+		return nil
+	}
+
+	ext.LogError(span, err)
+	return err
+}
+
+func (ws *WebsocketSession) onPeerSignal(ctx context.Context, message []byte, sessionId string) {
+	span, _ := opentracing.StartSpanFromContext(ctx, "WebsocketSession.onPeerSignal")
+	defer span.Finish()
+
+	span.SetTag("call.id", ws.callId)
+	span.SetTag("session.id", sessionId)
+
+	// TODO debug
+	log.Printf("onPeerSignal: %s\n", string(message))
 
 	var event InternalEvent
 
@@ -160,8 +229,8 @@ func (ws *WebsocketSession) onWebsocketSignal(ctx context.Context, message []byt
 	case err != nil:
 		ext.LogError(span, err)
 		return
-	case event.CallId != callId:
-		ext.LogError(span, errors.Errorf("received unexpected signal for call %s", event.CallId))
+	case event.CallId != ws.callId:
+		ext.LogError(span, errors.Errorf(`received unexpected signal for call "%s"`, event.CallId))
 		return
 	case event.PeerId == "":
 		ext.LogError(span, errors.New("received signal missing peer ID"))
