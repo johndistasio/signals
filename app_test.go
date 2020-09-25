@@ -19,7 +19,7 @@ func TestEvent_Unmarshal(t *testing.T) {
 }
 
 func TestInternalEvent_Marshal(t *testing.T) {
-	raw := `{"kind": "PEER", "body": "test", "peerId": "testPeer", "callId": "testCall"}`
+	raw := `{"kind": "PEER", "body": "test", "peer": "testPeer", "call": "testCall"}`
 
 	var event PeerEvent
 
@@ -28,6 +28,6 @@ func TestInternalEvent_Marshal(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, MessageKindPeer, event.Kind)
 	assert.Equal(t, "test", event.Body)
-	assert.Equal(t, "testPeer", event.PeerId)
-	assert.Equal(t, "testCall", event.CallId)
+	assert.Equal(t, "testPeer", event.Peer)
+	assert.Equal(t, "testCall", event.Call)
 }

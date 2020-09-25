@@ -13,12 +13,10 @@ import (
 )
 
 type WebsocketHandler struct {
-	lock         Semaphore
-	redis        Redis
-	upgrader     websocket.Upgrader
-	joinTimeout  time.Duration
-	readTimeout  time.Duration
-	pingInterval time.Duration
+	lock     Semaphore
+	redis    Redis
+	upgrader websocket.Upgrader
+	opts     *WebsocketSessionOptions
 }
 
 func (wh *WebsocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -38,15 +36,22 @@ func (wh *WebsocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ws := &WebsocketSession{
 		lock:         wh.lock,
 		redis:        wh.redis,
-		joinTimeout: wh.joinTimeout,
-		readTimeout:  wh.readTimeout,
-		pingInterval: wh.pingInterval,
+		joinTimeout:  wh.opts.JoinTimeout,
+		readTimeout:  wh.opts.ReadTimeout,
+		pingInterval: wh.opts.PingInterval,
 		conn:         conn,
 	}
 
-	go ws.onWebsocket()
+	go ws.Start()
 }
 
+type WebsocketSessionOptions struct {
+	JoinTimeout  time.Duration
+	ReadTimeout  time.Duration
+	PingInterval time.Duration
+}
+
+// TODO document tight coupling of connection and goroutine lifecycles
 type WebsocketSession struct {
 	lock         Semaphore
 	redis        Redis
@@ -55,149 +60,109 @@ type WebsocketSession struct {
 	pingInterval time.Duration
 	conn         *websocket.Conn
 	pubsub       *redis.PubSub
+
+	call    string
+	session string
+}
+
+func (ws *WebsocketSession) close(message string) error {
+	m := websocket.FormatCloseMessage(websocket.CloseNormalClosure, message)
+	return ws.conn.WriteControl(websocket.CloseMessage, m, time.Now().Add(1*time.Second))
 }
 
 // This function handles the complexity of managing the websocket connection and shuttling messages to the client.
-func (ws *WebsocketSession) onWebsocket() {
-	// Initialize a ticket for sending ping messages to the client; we'll use this to detect dead clients.
-	ticker := time.NewTicker(ws.pingInterval)
+func (ws *WebsocketSession) Start() {
+	span, ctx := opentracing.StartSpanFromContext(context.Background(), "WebsocketSession.Start")
+	defer span.Finish()
 
-	// Clean up resources upon returning from this function. Any goroutines spawned by this function should tie their
-	// lifecycle to the connection or the pubsub so as to avoid leaks.
-	defer func() {
-		_ = ws.conn.Close()
-		ticker.Stop()
-	}()
-
-	// Set up a cancellable context that subroutines can use to signal that we should bail on this websocket.
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Set an initial read deadline. The connection will be closed if we don't receive a pong within this time frame.
+	// Set an initial read deadline. The connection will be closed if we don't receive a handshake message within this
+	// time frame.
 	if ws.joinTimeout > 0 {
 		_ = ws.conn.SetReadDeadline(time.Now().Add(ws.joinTimeout))
 	}
 
-	// Handle close messages or disconnects from the client. Duplicates the default close message handler, but calls our
-	// cancel function.
-	ws.conn.SetCloseHandler(func(code int, text string) error {
-		cancel()
-		message := websocket.FormatCloseMessage(code, text)
-		_ = ws.conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
-		return nil
-	})
-
-	// Wait for "join call" handshake message
+	// Wait for a "join call" handshake message from the client.
 	_, message, err := ws.conn.ReadMessage()
 
 	if err != nil {
+		ext.LogError(span, err)
+		_ = ws.close("handshake read failure")
 		return
 	}
 
-	join, err := ws.onClientSignal(ctx, message)
+	join, err := parseClientHandshake(ctx, message)
+
+	if err != nil || (join.Call == "" || join.Session == "") {
+		ext.LogError(span, err)
+		_ = ws.close("bad handshake")
+		return
+	}
+
+	span.SetTag("event", join.Kind)
+	span.SetTag("call", join.Call)
+	span.SetTag("session", join.Session)
+
+	// Check if the client has a valid seat on the call.
+	held, err := ws.lock.Check(ctx, join.Call, join.Session)
 
 	if err != nil {
-		message := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bad handshake")
-		_ = ws.conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
+		ext.LogError(span, err)
+		_ = ws.close("seat backend failure")
 		return
 	}
 
-	// Check join status
-	if held, err := ws.lock.Check(ctx, join.Call, join.Session); err != nil || !held {
-		message := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bad seat")
-		_ = ws.conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
+	if !held {
+		_ = ws.close("bad seat")
 		return
 	}
+
+	ws.call = join.Call
+	ws.session = join.Session
 
 	// TODO write confirmation?
 
-	// Handle pong messages from the client, resetting the read deadline.
-	ws.conn.SetPongHandler(func(appData string) error {
-		span, ctx := opentracing.StartSpanFromContext(ctx, "WebsocketSession.pongHandler")
-		defer span.Finish()
-
-		span.SetTag("session", join.Session)
-		span.SetTag("call", join.Call)
-
-		// Reset the read deadline upon receiving a ping.
-		if ws.readTimeout > 0 {
-			_ = ws.conn.SetReadDeadline(time.Now().Add(ws.readTimeout))
-		}
-
-		if held, err := ws.lock.Acquire(ctx, join.Call, join.Session); err != nil || !held {
-			message := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "seat renewal failed")
-			_ = ws.conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
-			return err
-		}
-
-		return nil
-	})
-
-
-	// Subscribe
-
-	pubsub := ws.redis.Subscribe(ctx, channelKeyPrefix+join.Call)
-	defer pubsub.Close()
-
-	_, err = pubsub.Receive(ctx)
+	// Subscribe to the signal publishing backend.
+	ws.pubsub = ws.redis.Subscribe(ctx, channelKeyPrefix+ws.call)
+	_, err = ws.pubsub.Receive(ctx)
 
 	if err != nil {
+		ext.LogError(span, err)
+		_ = ws.close("signal backend failure")
 		return
 	}
 
-	go func() {
-		// Closing the socket is going to mess up writes, so we call our cancel func to bail on the main websocket
-		// handler loop. Called in a defer to ensure this happens even in the case of panics.
-		defer cancel()
+	// Client pongs are used to determine client liveliness.
+	ws.conn.SetPongHandler(ws.pongHandler)
 
-		// Ensure control messages are processed.
-		for {
-			if _, _, err := ws.conn.NextReader(); err != nil {
-				return
-			}
-		}
-	}()
-
-	ch := pubsub.Channel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			err := ws.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(1*time.Second))
-
-			if err != nil {
-				return
-			}
-		case msg, ok := <-ch:
-			if !ok {
-				// This channel will close when the pubsub is closed, either explicitly by us or due to connection loss.
-				return
-			}
-
-			if held, err := ws.lock.Check(ctx, join.Call, join.Session); err != nil || !held {
-				return
-			}
-
-			event, err := ws.onPeerSignal(ctx, []byte(msg.Payload), join.Call, join.Session)
-
-			b, err := json.Marshal(event)
-
-			if err != nil {
-				return
-			}
-
-			err = ws.conn.WriteMessage(websocket.TextMessage, b)
-
-			if err != nil {
-				return
-			}
-		}
-	}
+	go ws.readLoop()
+	go ws.writeLoop()
 }
 
-func (ws *WebsocketSession) onClientSignal(ctx context.Context, message []byte) (Event, error) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "WebsocketSession.onClientSignal")
+// pongHandler resets the read deadline and renews the client's lease on their seat.
+func (ws *WebsocketSession) pongHandler(_ string) error {
+	span, ctx := opentracing.StartSpanFromContext(context.Background(), "WebsocketSession.pongHandler")
+	defer span.Finish()
+
+	span.SetTag("call", ws.call)
+	span.SetTag("session", ws.session)
+
+	// Reset the read deadline upon receiving a ping.
+	if ws.readTimeout > 0 {
+		_ = ws.conn.SetReadDeadline(time.Now().Add(ws.readTimeout))
+	}
+
+	if held, err := ws.lock.Acquire(ctx, ws.call, ws.session); err != nil || !held {
+		message := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "seat renewal failure")
+		_ = ws.conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
+		return err
+	}
+
+	return nil
+
+}
+
+func parseClientHandshake(ctx context.Context, message []byte) (*Event, error) {
+	span, _ := opentracing.StartSpanFromContext(ctx, "WebsocketSession.parseClientHandshake")
 	defer span.Finish()
 
 	var event Event
@@ -206,12 +171,8 @@ func (ws *WebsocketSession) onClientSignal(ctx context.Context, message []byte) 
 
 	if err != nil {
 		ext.LogError(span, err)
-		return Event{}, err
+		return nil, err
 	}
-
-	span.SetTag("session", event.Session)
-	span.SetTag("call", event.Call)
-	span.SetTag("event", event.Kind)
 
 	switch {
 	case event.Kind != MessageKindJoin:
@@ -221,15 +182,124 @@ func (ws *WebsocketSession) onClientSignal(ctx context.Context, message []byte) 
 	case event.Session == "":
 		err = errors.Errorf("received event with empty session id")
 	default:
-		return event, nil
+		return &event, nil
 	}
 
-	ext.LogError(span, err)
-	return Event{}, err
+	return nil, err
 }
 
-func (ws *WebsocketSession) onPeerSignal(ctx context.Context, message []byte, call string, session string) (Event, error) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "WebsocketSession.onPeerSignal")
+// Continuously reads to ensure that control messages are processed. After the initial handshake we don't care
+// about messages from the client so those are discarded. The websocket library handles control messages internally.
+func (ws *WebsocketSession) readLoop() {
+	// If the read returns an error then the socket is in a bad state (e.g. the read timeout expired) and we won't
+	// be able to process control messages anymore. If this happens we should abort the entire connection and leave
+	// it to clients to reconnect if needed.
+	//
+	// Calling this in a defer ensure that this happens even if the reader panics.
+	defer func () {
+		_ = ws.close("websocket reader stopping")
+	}()
+
+	for {
+		if _, _, err := ws.conn.NextReader(); err != nil {
+			return
+		}
+	}
+}
+
+func (ws *WebsocketSession) writeLoop() {
+	// Initialize a ticket for sending ping messages to the client; we'll use this to detect dead clients.
+	ticker := time.NewTicker(ws.pingInterval)
+
+	// TODO rewrite
+	// Clean up resources upon returning from this function. Any goroutines spawned by this function should tie their
+	// lifecycle to the connection or the pubsub so as to avoid leaks.
+	defer func() {
+		ticker.Stop()
+		_ = ws.pubsub.Close()
+		_ = ws.close("websocket writer stopping")
+	}()
+
+	// This channel will close when the pubsub is closed, either explicitly with a Close() or due to connection loss.
+	ch := ws.pubsub.Channel()
+
+	for {
+		select {
+		case <-ticker.C:
+			// TODO trace
+			err := ws.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(1*time.Second))
+
+			if err != nil {
+				return
+			}
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+
+			bytes := []byte(msg.Payload)
+
+			if err := ws.onPeerEvent(bytes); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func (ws *WebsocketSession) onPeerEvent(message []byte) error {
+	span, ctx := opentracing.StartSpanFromContext(context.Background(), "WebsocketSession.onPeerMessage")
+	defer span.Finish()
+
+	span.SetTag("call", ws.call)
+	span.SetTag("session", ws.session)
+
+	held, err := ws.lock.Check(ctx, ws.call, ws.session)
+
+	if err != nil {
+		ext.LogError(span, err)
+		return err
+	}
+
+	if !held {
+		return errors.New("invalid session")
+	}
+
+	peer, err := parsePeerEvent(ctx, ws.call, message)
+
+	if err != nil {
+		ext.LogError(span, err)
+		return err
+	}
+
+	span.SetTag("event", peer.Kind)
+	span.SetTag("peer.call", peer.Call)
+	span.SetTag("peer.session", peer.Peer)
+
+	// Don't send echo'd messages back to clients.
+	if peer.Peer == ws.session {
+		return nil
+	}
+
+	bytes, err := json.Marshal(peer.Event)
+
+	if err != nil {
+		ext.LogError(span, err)
+		return err
+	}
+
+	err = ws.conn.WriteMessage(websocket.TextMessage, bytes)
+
+	if err != nil {
+		ext.LogError(span, err)
+		return err
+	}
+
+	return nil
+}
+
+// parsePeerEvent deserializes peer messages and vets them for error conditions.
+func parsePeerEvent(ctx context.Context, call string, message []byte) (*PeerEvent, error) {
+	span, _ := opentracing.StartSpanFromContext(ctx, "WebsocketSession.parsePeerSignal")
 	defer span.Finish()
 
 	var peer PeerEvent
@@ -237,15 +307,8 @@ func (ws *WebsocketSession) onPeerSignal(ctx context.Context, message []byte, ca
 	err := json.Unmarshal(message, &peer)
 
 	if err != nil {
-		ext.LogError(span, err)
-		return Event{}, err
+		return nil, err
 	}
-
-	span.SetTag("call", call)
-	span.SetTag("session", session)
-	span.SetTag("event", peer.Kind)
-	span.SetTag("peer.call", peer.Call)
-	span.SetTag("peer.session", peer.Peer)
 
 	switch {
 	case peer.Call != call:
@@ -254,13 +317,9 @@ func (ws *WebsocketSession) onPeerSignal(ctx context.Context, message []byte, ca
 		err = errors.New("received event missing peer ID")
 	case peer.Kind != MessageKindPeer && peer.Kind != MessageKindOffer && peer.Kind != MessageKindAnswer:
 		err = errors.Errorf(`received unexpected event kind "%s" from %s:%s`, peer.Kind, peer.Call, peer.Peer)
-	case peer.Peer == session:
-		// TODO this shouldn't be an error
-		err = errors.Errorf("received echo event")
 	default:
-		return peer.Event, nil
+		return &peer, nil
 	}
 
-	ext.LogError(span, err)
-	return Event{}, err
+	return nil, err
 }

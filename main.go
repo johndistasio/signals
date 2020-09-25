@@ -105,12 +105,13 @@ func main() {
 
 	wsHandler := corsHandler.Handle(
 		&WebsocketHandler{
-			lock:         locker,
-			redis:        rdb,
-			joinTimeout:  *wsJoinTimeout,
-			readTimeout:  *wsReadTimeout,
-			pingInterval: *wsPingInterval,
-
+			lock:  locker,
+			redis: rdb,
+			opts: &WebsocketSessionOptions{
+				JoinTimeout:  *wsJoinTimeout,
+				ReadTimeout:  *wsReadTimeout,
+				PingInterval: *wsPingInterval,
+			},
 			upgrader: websocket.Upgrader{
 				// Delegate XSS prevention to CORSHandler.
 				CheckOrigin:      func(*http.Request) bool { return true },
