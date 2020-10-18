@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Signals</title>
+    <style>
+      textarea {
+        resize: none;
+      }
+      .controls {
+        margin-left: 10px;
+      }
+      .console-container {
+        display: flex;
+      }
+      .console {
+        display: flex;
+        flex-direction: column;
+        margin: 10px;
+      }
+    </style>
+    <script>
+      window.addEventListener("load", (e) => {
+        ["room", "session"].forEach((key) => {
+          const val = window.sessionStorage.getItem(key);
+
+          if (val) {
+            document.getElementById(key).value = val;
+          }
+        });
+      });
+
+      const write = (msg) => {
+        const buf = document.getElementById("console").value;
+        document.getElementById("console").value = buf + msg + "\n";
+      };
+
+      const start = () => {
+        ["room", "session"].forEach((key) => {
+          const val = document.getElementById(key).value;
+
+          if (val !== "") {
+            window.sessionStorage.setItem(key, val);
+          }
+        });
+
+        const room = document.getElementById("room").value;
+        const session = document.getElementById("session").value;
+
+        if (room == "" || session === "") {
+          write("---ERROR: Need room and sesion---");
+          return;
+        }
+
+        window.sessionStorage.setItem("room", room);
+        window.sessionStorage.setItem("session", session);
+
+        const ws  = new WebSocket("ws://localhost:8080/ws");
+
+        ws.onopen = (e) => {
+          write("--WEBSOCKET CONNECTED---");
+          ws.send(JSON.stringify({kind: "JOIN", session: session, call: room}));
+        };
+
+        ws.onclose = (e) => {
+          write("---WEBSOCKET DISCONNECTED---");
+        };
+
+        ws.onmessage = (e) => {
+          write(e.data);
+        };
+      };
+    </script>
+  </head>
+  <body>
+    <h1>Signals Websocket</h1>
+    <div>
+      <div class="controls">
+        <button onClick=start()>Start</button>
+        <input id="room" type="text" placeholder="Room"></input>
+        <input id="session" type="text" placeholder="Session"></input>
+      </div>
+      <div class="console-container">
+        <div class="console">
+          <textarea id="console" cols="100" rows="30" readonly></textarea>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
