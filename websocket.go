@@ -78,6 +78,7 @@ func (ws *WebsocketSession) Start() {
 	// Set an initial read deadline. The connection will be closed if we don't receive a handshake message within this
 	// time frame.
 	if ws.joinTimeout > 0 {
+		// TODO record this error
 		_ = ws.conn.SetReadDeadline(time.Now().Add(ws.joinTimeout))
 	}
 
@@ -90,9 +91,19 @@ func (ws *WebsocketSession) Start() {
 		return
 	}
 
-	join, err := parseClientHandshake(ctx, message)
+	var join Event
 
-	if err != nil || (join.Call == "" || join.Session == "") {
+	err = json.Unmarshal(message, &join)
+
+	if err != nil {
+		ext.LogError(span, err)
+		_ = ws.close("bad handshake")
+		return
+	}
+
+	err = ValidateClientHandshake(ctx, join)
+
+	if err != nil {
 		ext.LogError(span, err)
 		_ = ws.close("bad handshake")
 		return
@@ -119,8 +130,6 @@ func (ws *WebsocketSession) Start() {
 	ws.call = join.Call
 	ws.session = join.Session
 
-	// TODO write confirmation?
-
 	// Subscribe to the signal publishing backend.
 	ws.pubsub = ws.redis.Subscribe(ctx, channelKeyPrefix+ws.call)
 	_, err = ws.pubsub.Receive(ctx)
@@ -130,6 +139,8 @@ func (ws *WebsocketSession) Start() {
 		_ = ws.close("signal backend failure")
 		return
 	}
+
+	// TODO write confirmation?
 
 	// Client pongs are used to determine client liveliness.
 	ws.conn.SetPongHandler(ws.pongHandler)
@@ -158,34 +169,39 @@ func (ws *WebsocketSession) pongHandler(_ string) error {
 	}
 
 	return nil
-
 }
 
-func parseClientHandshake(ctx context.Context, message []byte) (*Event, error) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "WebsocketSession.parseClientHandshake")
+func ValidateClientHandshake(ctx context.Context, event Event) error {
+	span, _ := opentracing.StartSpanFromContext(ctx, "WebsocketSession.ValidateClientHandshake")
 	defer span.Finish()
-
-	var event Event
-
-	err := json.Unmarshal(message, &event)
-
-	if err != nil {
-		ext.LogError(span, err)
-		return nil, err
-	}
 
 	switch {
 	case event.Kind != MessageKindJoin:
-		err = errors.Errorf(`received unexpected event kind "%s"`, event.Kind)
+		return ErrBadKind
 	case event.Call == "":
-		err = errors.Errorf("received event with empty call id")
+		return ErrNoCall
 	case event.Session == "":
-		err = errors.Errorf("received event with empty session id")
+		return ErrNoSession
 	default:
-		return &event, nil
+		return nil
 	}
+}
 
-	return nil, err
+// ValidatePeerEvent vets peer events for error conditions.
+func ValidatePeerEvent(ctx context.Context, call string, event Event) error {
+	span, _ := opentracing.StartSpanFromContext(ctx, "WebsocketSession.ValidatePeerEvent")
+	defer span.Finish()
+
+	switch {
+	case event.Kind != MessageKindPeerJoin && event.Kind != MessageKindOffer && event.Kind != MessageKindAnswer:
+		return ErrBadKind
+	case event.Call != call:
+		return ErrBadCall
+	case event.Session == "":
+		return ErrNoSession
+	default:
+		return nil
+	}
 }
 
 // Continuously reads to ensure that control messages are processed. After the initial handshake we don't care
@@ -264,7 +280,18 @@ func (ws *WebsocketSession) onPeerEvent(message []byte) error {
 		return errors.New("invalid session")
 	}
 
-	peer, err := parsePeerEvent(ctx, ws.call, message)
+	// TODO parsing should happen before checking
+
+	var peer Event
+
+	err = json.Unmarshal(message, &peer)
+
+	if err != nil {
+		ext.LogError(span, err)
+		return err
+	}
+
+	err = ValidatePeerEvent(ctx, ws.call, peer)
 
 	if err != nil {
 		ext.LogError(span, err)
@@ -273,14 +300,14 @@ func (ws *WebsocketSession) onPeerEvent(message []byte) error {
 
 	span.SetTag("event", peer.Kind)
 	span.SetTag("peer.call", peer.Call)
-	span.SetTag("peer.session", peer.Peer)
+	span.SetTag("peer.session", peer.Session)
 
 	// Don't send echo'd messages back to clients.
-	if peer.Peer == ws.session {
+	if peer.Session == ws.session {
 		return nil
 	}
 
-	bytes, err := json.Marshal(peer.Event)
+	bytes, err := json.Marshal(peer)
 
 	if err != nil {
 		ext.LogError(span, err)
@@ -297,29 +324,3 @@ func (ws *WebsocketSession) onPeerEvent(message []byte) error {
 	return nil
 }
 
-// parsePeerEvent deserializes peer messages and vets them for error conditions.
-func parsePeerEvent(ctx context.Context, call string, message []byte) (*PeerEvent, error) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "WebsocketSession.parsePeerSignal")
-	defer span.Finish()
-
-	var peer PeerEvent
-
-	err := json.Unmarshal(message, &peer)
-
-	if err != nil {
-		return nil, err
-	}
-
-	switch {
-	case peer.Call != call:
-		err = errors.Errorf(`received unexpected event for call "%s"`, peer.Call)
-	case peer.Peer == "":
-		err = errors.New("received event missing peer ID")
-	case peer.Kind != MessageKindPeer && peer.Kind != MessageKindOffer && peer.Kind != MessageKindAnswer:
-		err = errors.Errorf(`received unexpected event kind "%s" from %s:%s`, peer.Kind, peer.Call, peer.Peer)
-	default:
-		return &peer, nil
-	}
-
-	return nil, err
-}

@@ -28,12 +28,10 @@ func (s *SeatHandler) Handle(callId string, sessionId string) http.Handler {
 			return
 		}
 
-		event, _ := json.Marshal(PeerEvent{
-			Event: Event{
-				Kind: MessageKindPeer,
-				Call: callId,
-			},
-			Peer: sessionId,
+		event, _ := json.Marshal(Event{
+			Kind:    MessageKindPeerJoin,
+			Call:    callId,
+			Session: sessionId,
 		})
 
 		err = s.Pub.Publish(ctx, callId, event)

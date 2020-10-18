@@ -2,81 +2,69 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
-func TestParsePeerEvent(t *testing.T) {
-	peer := "testPeer"
-	call := "testCall"
-	kind := MessageKindPeer
+func TestValidateClientHandshake(t *testing.T) {
+	tests := map[Event]error{
+		Event{
+			Call:    "test",
+			Session: "test",
+			Kind:    MessageKindJoin,
+		}: nil,
+		Event{
+			Call:    "test",
+			Session: "test",
+			Kind:    MessageKindOffer,
+		}: ErrBadKind,
+		Event{
+			Call:    "",
+			Session: "test",
+			Kind:    MessageKindJoin,
+		}: ErrNoCall,
+		Event{
+			Call:    "test",
+			Session: "",
+			Kind:    MessageKindJoin,
+		}: ErrNoSession,
+	}
 
-	bytes, _ := json.Marshal(PeerEvent{
-		Peer: peer,
-		Event: Event{
-			Call: call,
-			Kind: kind,
-		},
-	})
-
-	event, err := parsePeerEvent(context.Background(), call, bytes)
-
-	assert.Nil(t, err)
-
-	assert.Equal(t, peer, event.Peer)
-	assert.Equal(t, call, event.Call)
-	assert.Equal(t, kind, event.Kind)
+	for event, expected := range tests {
+		err := ValidateClientHandshake(context.Background(), event)
+		assert.Equal(t, expected, err)
+	}
 }
 
-func TestParsePeerEvent_BadCall(t *testing.T) {
-	peer := "testPeer"
+func TestValidatePeerEvent(t *testing.T) {
 	call := "testCall"
-	kind := MessageKindPeer
 
-	bytes, _ := json.Marshal(PeerEvent{
-		Peer: peer,
-		Event: Event{
-			Call: call,
-			Kind: kind,
-		},
-	})
+	tests := map[Event]error{
+		Event{
+			Call:    call,
+			Kind:    MessageKindPeerJoin,
+			Session: "testSession",
+		}: nil,
+		Event{
+			Call:    call,
+			Kind:    MessageKindJoin,
+			Session: "testSession",
+		}: ErrBadKind,
+		Event{
+			Call:    "",
+			Kind:    MessageKindPeerJoin,
+			Session: "testSession",
+		}: ErrBadCall,
+		Event{
+			Call:    call,
+			Kind:    MessageKindPeerJoin,
+			Session: "",
+		}: ErrNoSession,
+	}
 
-	_, err := parsePeerEvent(context.Background(), "differentCall", bytes)
+	for event, expected := range tests {
+		err := ValidatePeerEvent(context.Background(), call, event)
+		assert.Equal(t, expected, err)
+	}
 
-	assert.NotNil(t, err)
-}
-
-func TestParsePeerEvent_EmptyPeer(t *testing.T) {
-	call := "testCall"
-	kind := MessageKindPeer
-
-	bytes, _ := json.Marshal(PeerEvent{
-		Event: Event{
-			Call: call,
-			Kind: kind,
-		},
-	})
-
-	_, err := parsePeerEvent(context.Background(), call, bytes)
-
-	assert.NotNil(t, err)
-}
-
-func TestParsePeerEvent_BadMessageKind(t *testing.T) {
-	peer := "testPeer"
-	call := "testCall"
-	kind := MessageKindJoin
-
-	bytes, _ := json.Marshal(PeerEvent{
-		Peer: peer,
-		Event: Event{
-			Call: call,
-			Kind: kind,
-		},
-	})
-
-	_, err := parsePeerEvent(context.Background(), call, bytes)
-
-	assert.NotNil(t, err)
 }
