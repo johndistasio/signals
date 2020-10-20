@@ -7,6 +7,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
+	"github.com/opentracing/opentracing-go/log"
 	"github.com/pkg/errors"
 	"net/http"
 	"time"
@@ -78,8 +79,12 @@ func (ws *WebsocketSession) Start() {
 	// Set an initial read deadline. The connection will be closed if we don't receive a handshake message within this
 	// time frame.
 	if ws.joinTimeout > 0 {
-		// TODO record this error
-		_ = ws.conn.SetReadDeadline(time.Now().Add(ws.joinTimeout))
+		err := ws.conn.SetReadDeadline(time.Now().Add(ws.joinTimeout))
+		if err != nil {
+			ext.LogError(span, err)
+			_ = ws.close("socket error")
+			return
+		}
 	}
 
 	// Wait for a "join call" handshake message from the client.
@@ -96,15 +101,15 @@ func (ws *WebsocketSession) Start() {
 	err = json.Unmarshal(message, &join)
 
 	if err != nil {
-		ext.LogError(span, err)
+		span.LogFields(log.String("close", err.Error()))
 		_ = ws.close("bad handshake")
 		return
 	}
 
-	err = ValidateClientHandshake(ctx, join)
+	valid := ValidateClientHandshake(ctx, join)
 
-	if err != nil {
-		ext.LogError(span, err)
+	if !valid {
+		span.LogFields(log.String("close", "bad handshake"))
 		_ = ws.close("bad handshake")
 		return
 	}
@@ -118,11 +123,12 @@ func (ws *WebsocketSession) Start() {
 
 	if err != nil {
 		ext.LogError(span, err)
-		_ = ws.close("seat backend failure")
+		_ = ws.close("backend failure")
 		return
 	}
 
 	if !held {
+		span.LogFields(log.String("close", "lock not held"))
 		_ = ws.close("bad seat")
 		return
 	}
@@ -136,20 +142,28 @@ func (ws *WebsocketSession) Start() {
 
 	if err != nil {
 		ext.LogError(span, err)
-		_ = ws.close("signal backend failure")
+		_ = ws.close("backend failure")
 		return
 	}
 
-	// TODO write confirmation?
-
 	// Client pongs are used to determine client liveliness.
 	ws.conn.SetPongHandler(ws.pongHandler)
+
+	bytes, _ := json.Marshal(Event{Kind: MessageKindWelcome, Call: ws.call})
+
+	err = ws.conn.WriteMessage(websocket.TextMessage, bytes)
+
+	if err != nil {
+		ext.LogError(span, err)
+		_ = ws.close("confirmation failure")
+	}
 
 	go ws.readLoop()
 	go ws.writeLoop()
 }
 
-// pongHandler resets the read deadline and renews the client's lease on their seat.
+// pongHandler resets the read deadline and renews the client's lease on their seat. When the least can't be renewed,
+// it will return an error which will cause the underlying implementation to close the websocket.
 func (ws *WebsocketSession) pongHandler(_ string) error {
 	span, ctx := opentracing.StartSpanFromContext(context.Background(), "WebsocketSession.pongHandler")
 	defer span.Finish()
@@ -165,43 +179,56 @@ func (ws *WebsocketSession) pongHandler(_ string) error {
 	if held, err := ws.lock.Acquire(ctx, ws.call, ws.session); err != nil || !held {
 		message := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "seat renewal failure")
 		_ = ws.conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
-		return err
 	}
 
 	return nil
 }
 
-func ValidateClientHandshake(ctx context.Context, event Event) error {
+func ValidateClientHandshake(ctx context.Context, event Event) bool {
 	span, _ := opentracing.StartSpanFromContext(ctx, "WebsocketSession.ValidateClientHandshake")
 	defer span.Finish()
 
-	switch {
-	case event.Kind != MessageKindJoin:
-		return ErrBadKind
-	case event.Call == "":
-		return ErrNoCall
-	case event.Session == "":
-		return ErrNoSession
-	default:
-		return nil
+	if  event.Call == "" {
+		return false
 	}
+
+	if event.Session == "" {
+		return false
+	}
+
+	if event.Body != "" {
+		return false
+	}
+
+	if event.Kind != MessageKindJoin {
+		return false
+	}
+
+	return true
 }
 
-// ValidatePeerEvent vets peer events for error conditions.
-func ValidatePeerEvent(ctx context.Context, call string, event Event) error {
+// ValidatePeerEvent vets events from peers for invalid conditions.
+func ValidatePeerEvent(ctx context.Context, call string, event Event) bool {
 	span, _ := opentracing.StartSpanFromContext(ctx, "WebsocketSession.ValidatePeerEvent")
 	defer span.Finish()
 
-	switch {
-	case event.Kind != MessageKindPeerJoin && event.Kind != MessageKindOffer && event.Kind != MessageKindAnswer:
-		return ErrBadKind
-	case event.Call != call:
-		return ErrBadCall
-	case event.Session == "":
-		return ErrNoSession
-	default:
-		return nil
+	if event.Call != call {
+		return false
 	}
+
+	if event.Session == "" {
+		return false
+	}
+
+	if event.Kind != MessageKindPeerJoin && event.Kind != MessageKindOffer && event.Kind != MessageKindAnswer {
+		return false
+	}
+
+	if (event.Kind == MessageKindOffer || event.Kind == MessageKindAnswer) && event.Body == "" {
+		return false
+	}
+
+	return true
 }
 
 // Continuously reads to ensure that control messages are processed. After the initial handshake we don't care
@@ -269,6 +296,26 @@ func (ws *WebsocketSession) onPeerEvent(message []byte) error {
 	span.SetTag("call", ws.call)
 	span.SetTag("session", ws.session)
 
+	var peer Event
+
+	err := json.Unmarshal(message, &peer)
+
+	if err != nil {
+		ext.LogError(span, err)
+		return err
+	}
+
+	span.SetTag("event", peer.Kind)
+	span.SetTag("peer.call", peer.Call)
+	span.SetTag("peer.session", peer.Session)
+
+	valid := ValidatePeerEvent(ctx, ws.call, peer)
+
+	if !valid {
+		span.LogFields(log.String("skip", "invalid event"))
+		return nil
+	}
+
 	held, err := ws.lock.Check(ctx, ws.call, ws.session)
 
 	if err != nil {
@@ -280,30 +327,9 @@ func (ws *WebsocketSession) onPeerEvent(message []byte) error {
 		return errors.New("invalid session")
 	}
 
-	// TODO parsing should happen before checking
-
-	var peer Event
-
-	err = json.Unmarshal(message, &peer)
-
-	if err != nil {
-		ext.LogError(span, err)
-		return err
-	}
-
-	err = ValidatePeerEvent(ctx, ws.call, peer)
-
-	if err != nil {
-		ext.LogError(span, err)
-		return err
-	}
-
-	span.SetTag("event", peer.Kind)
-	span.SetTag("peer.call", peer.Call)
-	span.SetTag("peer.session", peer.Session)
-
 	// Don't send echo'd messages back to clients.
 	if peer.Session == ws.session {
+		span.LogFields(log.String("skip", "echo event"))
 		return nil
 	}
 

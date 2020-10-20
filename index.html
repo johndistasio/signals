@@ -47,7 +47,8 @@
         const session = document.getElementById("session").value;
 
         if (room == "" || session === "") {
-          write("---ERROR: Need room and sesion---");
+          write("---ERROR---");
+          write("need room and session");
           return;
         }
 
@@ -57,12 +58,13 @@
         const ws  = new WebSocket("ws://localhost:8080/ws");
 
         ws.onopen = (e) => {
-          write("--WEBSOCKET CONNECTED---");
+          write("--CONNECTED---");
           ws.send(JSON.stringify({kind: "JOIN", session: session, call: room}));
         };
 
         ws.onclose = (e) => {
-          write("---WEBSOCKET DISCONNECTED---");
+          write("---DISCONNECTED---");
+          write(e.reason);
         };
 
         ws.onmessage = (e) => {

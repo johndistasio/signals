@@ -7,27 +7,33 @@ import (
 )
 
 func TestValidateClientHandshake(t *testing.T) {
-	tests := map[Event]error{
+	tests := map[Event]bool{
 		Event{
 			Call:    "test",
 			Session: "test",
 			Kind:    MessageKindJoin,
-		}: nil,
+		}: true,
+		Event{
+			Body:    "test",
+			Call:    "test",
+			Session: "test",
+			Kind:    MessageKindJoin,
+		}: false,
 		Event{
 			Call:    "test",
 			Session: "test",
 			Kind:    MessageKindOffer,
-		}: ErrBadKind,
+		}: false,
 		Event{
 			Call:    "",
 			Session: "test",
 			Kind:    MessageKindJoin,
-		}: ErrNoCall,
+		}: false,
 		Event{
 			Call:    "test",
 			Session: "",
 			Kind:    MessageKindJoin,
-		}: ErrNoSession,
+		}: false,
 	}
 
 	for event, expected := range tests {
@@ -39,32 +45,44 @@ func TestValidateClientHandshake(t *testing.T) {
 func TestValidatePeerEvent(t *testing.T) {
 	call := "testCall"
 
-	tests := map[Event]error{
+	// TODO split these cases into individual tests
+	tests := map[Event]bool{
 		Event{
 			Call:    call,
 			Kind:    MessageKindPeerJoin,
 			Session: "testSession",
-		}: nil,
+		}: true,
+		Event{
+			Body:    "testBody",
+			Call:    call,
+			Kind:    MessageKindOffer,
+			Session: "testSession",
+		}: true,
+		Event{
+			Body:    "testBody",
+			Call:    call,
+			Kind:    MessageKindAnswer,
+			Session: "testSession",
+		}: true,
 		Event{
 			Call:    call,
 			Kind:    MessageKindJoin,
 			Session: "testSession",
-		}: ErrBadKind,
+		}: false,
 		Event{
 			Call:    "",
 			Kind:    MessageKindPeerJoin,
 			Session: "testSession",
-		}: ErrBadCall,
+		}: false,
 		Event{
 			Call:    call,
 			Kind:    MessageKindPeerJoin,
 			Session: "",
-		}: ErrNoSession,
+		}: false,
 	}
 
 	for event, expected := range tests {
-		err := ValidatePeerEvent(context.Background(), call, event)
-		assert.Equal(t, expected, err)
+		actual := ValidatePeerEvent(context.Background(), call, event)
+		assert.Equal(t, expected, actual)
 	}
-
 }

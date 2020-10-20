@@ -95,9 +95,7 @@ func main() {
 		ValidateSessionId: ParseSessionId,
 	}
 
-	callHandler := corsHandler.Handle(
-		sessionHandler.Handle(
-			&SeatHandler{locker, publisher}))
+	callHandler := corsHandler.Handle(&SeatHandler{GenerateSessionId, locker, publisher})
 
 	signalHandler := corsHandler.Handle(
 		sessionHandler.Handle(
