@@ -3,26 +3,37 @@ package main
 import (
 	"github.com/opentracing/opentracing-go"
 	"net/http"
+	"sort"
 	"strings"
 )
 
 type CORSHandler struct {
 	Origin  string
 	Headers []string
+	Methods []string
 }
 
-func (c *CORSHandler) Handle(next http.Handler, methods ...string) http.Handler {
-	if len(methods) < 1 {
-		methods = []string{"GET"}
-	}
+func (c *CORSHandler) Handle(next http.Handler) http.Handler {
 
 	methodsHash := make(map[string]int)
 
-	for _, val := range methods {
-		methodsHash[strings.ToUpper(val)] = 1
+	methodsHash["OPTIONS"] = 1
+
+	for _, val := range c.Methods {
+		method := strings.ToUpper(val)
+		methodsHash[method] = 1
 	}
 
-	methodsString := strings.Join(methods, ", ") + ", OPTIONS"
+	pos := 0
+	methodsSlice := make([]string, len(methodsHash))
+	for method, _ := range methodsHash {
+		methodsSlice[pos] = method
+		pos++
+	}
+
+	sort.Strings(methodsSlice)
+
+	methodsString := strings.Join(methodsSlice, ", ")
 
 	headersString := strings.Join(c.Headers, ", ")
 

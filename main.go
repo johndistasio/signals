@@ -80,21 +80,22 @@ func main() {
 
 	mux := NewTracingMux()
 
-	corsHandler := &CORSHandler{
-		Origin: (*origin).String(),
-		Headers: []string{
-			"Cache-Control",
-			"Content-Type",
-			"User-Agent",
-		},
-	}
+	corsOrigin := (*origin).String()
+	corsHeaders := []string{"Cache-Control", "Content-Type", "User-Agent"}
 
-	callHandler := corsHandler.Handle(&SeatHandler{GenerateSessionId, locker, publisher})
+	getMiddleware := &CORSHandler{Origin: corsOrigin, Headers: corsHeaders, Methods: []string{"GET"}}
+	postMiddleware := &CORSHandler{Origin: corsOrigin, Headers: corsHeaders, Methods: []string{"POST"}}
+	jsonMiddleware := &ContentTypeMiddleware{MimeTypes: []string{"application/json"}}
 
-	signalHandler := corsHandler.Handle(
-			&SignalHandler{locker, publisher, 512}, "POST")
+	callHandler := getMiddleware.Handle(&SeatHandler{GenerateSessionId, locker, publisher})
 
-	wsHandler := corsHandler.Handle(
+	signalHandler := postMiddleware.Handle(jsonMiddleware.Handle(&SignalHandler{
+		Lock: locker,
+		Publisher: publisher,
+		MaxRead: 512,
+	}))
+
+	wsHandler := getMiddleware.Handle(
 		&WebsocketHandler{
 			lock:  locker,
 			redis: rdb,
