@@ -60,6 +60,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	}))
 
+	// TODO don't start this thing until the application handlers have successfully initialized
 	go func() {
 		log.Printf("Starting signals infra server on %s\n", (*infraAddr).String())
 		err := http.ListenAndServe((*infraAddr).String(), nil)
@@ -82,24 +83,16 @@ func main() {
 	corsHandler := &CORSHandler{
 		Origin: (*origin).String(),
 		Headers: []string{
-			SessionHeader,
 			"Cache-Control",
 			"Content-Type",
 			"User-Agent",
 		},
 	}
 
-	sessionHandler := &SessionHandler{
-		ExtractCallId:     ExtractCallId,
-		CreateSessionId:   GenerateSessionId,
-		ValidateSessionId: ParseSessionId,
-	}
-
 	callHandler := corsHandler.Handle(&SeatHandler{GenerateSessionId, locker, publisher})
 
 	signalHandler := corsHandler.Handle(
-		sessionHandler.Handle(
-			&SignalHandler{locker, publisher, 512}), "POST")
+			&SignalHandler{locker, publisher, 512}, "POST")
 
 	wsHandler := corsHandler.Handle(
 		&WebsocketHandler{
@@ -118,7 +111,7 @@ func main() {
 		})
 
 	mux.Handle("/call/", callHandler)
-	mux.Handle("/signal/", signalHandler)
+	mux.Handle("/signal", signalHandler)
 	mux.Handle("/ws", wsHandler)
 
 	server := &http.Server{

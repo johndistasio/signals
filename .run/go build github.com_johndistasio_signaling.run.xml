@@ -1,11 +1,11 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="go build github.com/johndistasio/signaling" type="GoApplicationRunConfiguration" factoryName="Go Application" nameIsGenerated="true">
-    <module name="signaling" />
+  <configuration default="false" name="go build github.com/johndistasio/signals" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="signals" />
     <working_directory value="$PROJECT_DIR$" />
     <parameters value="--seat-max-age=5m --origin='*'" />
     <kind value="PACKAGE" />
     <filePath value="$PROJECT_DIR$/main.go" />
-    <package value="github.com/johndistasio/signaling" />
+    <package value="github.com/johndistasio/signals" />
     <directory value="$PROJECT_DIR$/" />
     <method v="2" />
   </configuration>

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/johndistasio/signaling/mocks"
+	"github.com/johndistasio/signals/mocks"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	"io/ioutil"
@@ -100,7 +100,7 @@ func (suite *SeatHandlerTestSuite) TestSeatHandler_ServeHTTP_NoSeatAvailable() {
 }
 
 // Validate that we return a 500 to the client upon a failure to attempt to obtain a seat.
-func (suite *SeatHandlerTestSuite) TestSeatHandler_ServeHTTP_LockFailure() {
+func (suite *SeatHandlerTestSuite) TestSeatHandler_ServeHTTP_SeatFailure() {
 	suite.Lock.On("Acquire", mock.Anything, suite.Call, suite.Session).Return(
 		false, errors.New("uh oh"))
 

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"github.com/go-redis/redis/v8"
-	"github.com/johndistasio/signaling/mocks"
+	"github.com/johndistasio/signals/mocks"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	"io"
