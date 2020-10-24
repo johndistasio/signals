@@ -55,7 +55,7 @@ func (s *SignalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.Publisher.Publish(ctx, event.Call, body)
+	err = s.Publisher.Publish(ctx, event.Call, event)
 
 	if err != nil {
 		ext.LogError(span, err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/ext"
 	"net/http"
 )
 
@@ -42,27 +43,28 @@ func (sh *SeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	event, _ := json.Marshal(Event{
+	event := Event{
 		Kind:    MessageKindPeerJoin,
 		Call:    call,
 		Session: session,
-	})
+	}
 
 	err = sh.Publisher.Publish(ctx, call, event)
 
 	if err != nil {
 		_ = sh.Lock.Release(ctx, call, session)
+		ext.LogError(span, err)
 		http.Error(w, "publisher backend unavailable", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 
-	event, _ = json.Marshal(Event{
+	encoded, _ := json.Marshal(Event{
 		Kind:    MessageKindJoin,
 		Call:    call,
 		Session: session,
 	})
 
-	_, _ = w.Write(event)
+	_, _ = w.Write(encoded)
 }

@@ -43,11 +43,9 @@ func (suite *SignalHandlerTestSuite) SetupTest() {
 		Session: suite.Session,
 	}
 
-	encoded, _ := json.Marshal(suite.Event)
-
 	suite.Publisher = new(mocks.Publisher)
 	suite.Publish = suite.Publisher.On(
-		"Publish", mock.Anything, suite.Call, encoded).Return(nil)
+		"Publish", mock.Anything, suite.Call, suite.Event).Return(nil)
 
 	suite.Handler = &SignalHandler{
 		Lock:      suite.Lock,

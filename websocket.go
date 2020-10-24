@@ -137,7 +137,7 @@ func (ws *WebsocketSession) Start() {
 	ws.session = join.Session
 
 	// Subscribe to the signal publishing backend.
-	ws.pubsub = ws.redis.Subscribe(ctx, channelKeyPrefix+ws.call)
+	ws.pubsub = ws.redis.Subscribe(ctx, RedisTopicPrefix+ws.call)
 	_, err = ws.pubsub.Receive(ctx)
 
 	if err != nil {

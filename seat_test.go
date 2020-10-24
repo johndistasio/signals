@@ -42,14 +42,14 @@ func TestSeatHandlerTestSuite(t *testing.T) {
 
 // Validate the behavior of a successful request.
 func (suite *SeatHandlerTestSuite) TestSeatHandler_ServeHTTP() {
-	bytes, _ := json.Marshal(Event{
+	published := Event{
 		Call:    suite.Call,
 		Session: suite.Session,
 		Kind:    MessageKindPeerJoin,
-	})
+	}
 
 	suite.Lock.On("Acquire", mock.Anything, suite.Call, suite.Session).Return(true, nil)
-	suite.Publisher.On("Publish", mock.Anything, suite.Call, bytes).Return(nil)
+	suite.Publisher.On("Publish", mock.Anything, suite.Call, published).Return(nil)
 
 	req := httptest.NewRequest("GET", suite.URL, nil)
 	w := httptest.NewRecorder()
@@ -116,15 +116,15 @@ func (suite *SeatHandlerTestSuite) TestSeatHandler_ServeHTTP_SeatFailure() {
 // Validate that we attempt to release the acquired seat and return a 500 to the client upon a failure to publish
 // the "new peer" message.
 func (suite *SeatHandlerTestSuite) TestSeatHandler_PublisherFailure() {
-	bytes, _ := json.Marshal(Event{
+	event := Event{
 		Call:    suite.Call,
 		Session: suite.Session,
 		Kind:    MessageKindPeerJoin,
-	})
+	}
 
 	suite.Lock.On("Acquire", mock.Anything, suite.Call, suite.Session).Return(true, nil)
 	suite.Lock.On("Release", mock.Anything, suite.Call, suite.Session).Return(nil)
-	suite.Publisher.On("Publish", mock.Anything, suite.Call, bytes).Return(errors.New("uh oh"))
+	suite.Publisher.On("Publish", mock.Anything, suite.Call, event).Return(errors.New("uh oh"))
 
 	req := httptest.NewRequest("GET", suite.URL, nil)
 	w := httptest.NewRecorder()
