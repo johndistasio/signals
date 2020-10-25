@@ -13,16 +13,16 @@ import (
 
 var (
 	addr        = kingpin.Flag("addr", "Host:port for service endpoints.").Envar("SIGNALS_ADDR").Default(":8080").TCP()
-	healthzAddr = kingpin.Flag("health-addr", "Host:port for healthcheck endpoints.").Envar("SIGNALS_HEALTHZ_ADDR").Default(":8090").TCP()
+	healthzAddr = kingpin.Flag("healthz-addr", "Host:port for healthcheck endpoints.").Envar("SIGNALS_HEALTHZ_ADDR").Default(":8090").TCP()
 	origin      = kingpin.Flag("origin", "Origin for CORS.").Envar("SIGNALS_ORIGIN").Default("http://localhost:8080").URL()
 
 	redisAddr = kingpin.Flag("redis-addr", "Redis host:addr.").Envar("SIGNALS_REDIS_ADDR").Default("localhost:6379").TCP()
 
-	seatCount  = kingpin.Flag("seat-count", "Max clients for signaling session.").Envar("SIGNALS_SEAT_COUNT").Default("2").Int()
-	seatMaxAge = kingpin.Flag("seat-max-age", "Max age for signaling session seat.").Envar("SIGNALS_SEAT_MAX_AGE").Default("30s").Duration()
+	seatCount   = kingpin.Flag("seat-count", "Max clients for signaling session.").Envar("SIGNALS_SEAT_COUNT").Default("2").Int()
+	seatTimeout = kingpin.Flag("seat-timeout", "Timeout for signaling session seat.").Envar("SIGNALS_SEAT_TIMEOUT").Default("30s").Duration()
 
-	wsHandshakeTimeout = kingpin.Flag("ws-handshake-timeout", "Max time for websocket upgrade handshake.").Envar("SIGNALS_WS_HANDSHAKE_TIMEOUT").Default("0s").Duration()
-	wsJoinTimeout      = kingpin.Flag("ws-join-timeout", "Max time for call join handshake.").Envar("SIGNALS_WS_JOIN_TIMEOUT").Default("0s").Duration()
+	wsHandshakeTimeout = kingpin.Flag("ws-handshake-timeout", "Max time for websocket upgrade handshake (zero = no timeout).").Envar("SIGNALS_WS_HANDSHAKE_TIMEOUT").Default("0s").Duration()
+	wsJoinTimeout      = kingpin.Flag("ws-join-timeout", "Max time for call join handshake (zero = no timeout).").Envar("SIGNALS_WS_JOIN_TIMEOUT").Default("0s").Duration()
 	wsPingInterval     = kingpin.Flag("ws-ping-interval", "Time between websocket client liveliness check.").Envar("SIGNALS_WS_PING_INTERVAL").Default("5s").Duration()
 	wsReadTimeout      = kingpin.Flag("ws-read-timeout", "Max time between websocket reads. Must be greater then ping interval.").Envar("SIGNALS_WS_READ_TIMEOUT").Default("10s").Duration()
 )
@@ -46,7 +46,7 @@ func main() {
 	mux := NewTracingMux()
 
 	locker := &RedisSemaphore{
-		Age:   *seatMaxAge,
+		Age:   *seatTimeout,
 		Count: *seatCount,
 		Redis: rdb,
 	}

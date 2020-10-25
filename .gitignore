@@ -1,4 +1,6 @@
-signaling
+# built binary
+signals
+
 *.rdb
 
 *.test
