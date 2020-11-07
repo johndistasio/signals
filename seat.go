@@ -25,7 +25,7 @@ func (sh *SeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	call := ExtractCallId(ctx, r)
 
 	if call == "" {
-		http.Error(w, "not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
@@ -34,7 +34,8 @@ func (sh *SeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	acq, err := sh.Lock.Acquire(ctx, call, session)
 
 	if err != nil {
-		http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
+		ext.LogError(span, err)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
@@ -54,7 +55,7 @@ func (sh *SeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		_ = sh.Lock.Release(ctx, call, session)
 		ext.LogError(span, err)
-		http.Error(w, "publisher backend unavailable", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 

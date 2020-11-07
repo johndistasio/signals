@@ -46,7 +46,7 @@ func (s *SignalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		ext.LogError(span, err)
-		http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
