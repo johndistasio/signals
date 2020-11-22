@@ -177,6 +177,7 @@ func (ws *WebsocketSession) pongHandler(_ string) error {
 	}
 
 	if held, err := ws.lock.Acquire(ctx, ws.call, ws.session); err != nil || !held {
+		ext.LogError(span, err)
 		message := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "seat renewal failure")
 		_ = ws.conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(1*time.Second))
 	}
