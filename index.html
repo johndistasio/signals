@@ -7,10 +7,11 @@
         resize: none;
       }
       .controls {
-        margin-left: 10px;
+        margin: 10px;
       }
       .console-container {
         display: flex;
+        flex-direction: column;
       }
       .console {
         display: flex;
@@ -18,72 +19,25 @@
         margin: 10px;
       }
     </style>
-    <script>
-      window.addEventListener("load", (e) => {
-        ["room", "session"].forEach((key) => {
-          const val = window.sessionStorage.getItem(key);
-
-          if (val) {
-            document.getElementById(key).value = val;
-          }
-        });
-      });
-
-      const write = (msg) => {
-        const buf = document.getElementById("console").value;
-        document.getElementById("console").value = buf + msg + "\n";
-      };
-
-      const start = () => {
-        ["room", "session"].forEach((key) => {
-          const val = document.getElementById(key).value;
-
-          if (val !== "") {
-            window.sessionStorage.setItem(key, val);
-          }
-        });
-
-        const room = document.getElementById("room").value;
-        const session = document.getElementById("session").value;
-
-        if (room == "" || session === "") {
-          write("---ERROR---");
-          write("need room and session");
-          return;
-        }
-
-        window.sessionStorage.setItem("room", room);
-        window.sessionStorage.setItem("session", session);
-
-        const ws  = new WebSocket("ws://localhost:8080/ws");
-
-        ws.onopen = (e) => {
-          write("--CONNECTED---");
-          ws.send(JSON.stringify({kind: "JOIN", session: session, call: room}));
-        };
-
-        ws.onclose = (e) => {
-          write("---DISCONNECTED---");
-          write(e.reason);
-        };
-
-        ws.onmessage = (e) => {
-          write(e.data);
-        };
-      };
-    </script>
+    <script src="./index.js"></script>
   </head>
   <body>
     <h1>Signals Websocket</h1>
     <div>
       <div class="controls">
-        <button onClick=start()>Start</button>
-        <input id="room" type="text" placeholder="Room"></input>
-        <input id="session" type="text" placeholder="Session"></input>
+        <div>
+          <input id="callInput" type="text" placeholder="Enter Call Here"></input>
+          <button id="connectButton" onClick="connect()">Connect</button>
+          <button id="disconnectButton" onClick="disconnect()" disabled>Disconnect</button>
+        </div>
+        <div>
+          <input id="messageInput" type="text" placeholder="Enter Message Here"></input>
+          <button id="sendButton" onClick="send()" disabled>Send</button>
+        </div>
       </div>
       <div class="console-container">
         <div class="console">
-          <textarea id="console" cols="100" rows="30" readonly></textarea>
+          <textarea id="display" rows="30" readonly></textarea>
         </div>
       </div>
     </div>

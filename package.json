@@ -4,7 +4,7 @@
   "description": "This signaling service provides facilities for establishing bidirectional communication between WebRTC peers. It aims to be as simple as possible, delegating most state and identity management to clients.",
   "main": "index.js",
   "scripts": {
-    "start": "browser-sync start --server --files *.html --files *.js",
+    "start": "http-server",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/johndistasio/signals#readme",
   "devDependencies": {
-    "browser-sync": "^2.26.13"
-  }
+    "http-server": "^0.12.3"
+  },
+  "dependencies": {}
 }
