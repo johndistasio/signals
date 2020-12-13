@@ -94,9 +94,10 @@ function connect() {
       state.call = call;
       state.session = json["session"];
       state.ws = ws;
-    })
 
-  connectButton.disabled = true;
+      connectButton.disabled = true;
+    })
+    .catch((e) => display(e.toString()))
 }
 
 function send() {
