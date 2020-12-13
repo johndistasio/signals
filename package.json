@@ -4,7 +4,7 @@
   "description": "This signaling service provides facilities for establishing bidirectional communication between WebRTC peers. It aims to be as simple as possible, delegating most state and identity management to clients.",
   "main": "index.js",
   "scripts": {
-    "start": "http-server",
+    "start": "http-server -p 8181",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
