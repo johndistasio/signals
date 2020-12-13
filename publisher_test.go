@@ -2,8 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/go-redis/redis/v8"
-	"github.com/johndistasio/signaling/mocks"
+	"github.com/johndistasio/signals/mocks"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	"net"
@@ -14,17 +15,27 @@ const RedisPublisherTestChannel = "test"
 
 type RedisPublisherTestSuite struct {
 	suite.Suite
-	mockRedisPublish *mock.Call
-	pub              *RedisPublisher
+	Topic string
+	Channel string
+	Event Event
+	Publisher *RedisPublisher
+	Publish   *mock.Call
 }
 
 func (suite *RedisPublisherTestSuite) SetupTest() {
 	rdb := new(mocks.Redis)
 
-	key := channelKeyPrefix + RedisPublisherTestChannel
+	suite.Topic = "test"
 
-	suite.mockRedisPublish = rdb.On("Publish", mock.Anything, key, mock.Anything)
-	suite.pub = &RedisPublisher{rdb}
+	suite.Event = Event {
+		Call: suite.Topic,
+		Session: "12345",
+	}
+
+	encoded, _ := json.Marshal(suite.Event)
+
+	suite.Publish = rdb.On("Publish", mock.Anything, RedisTopicPrefix + suite.Topic, encoded)
+	suite.Publisher = &RedisPublisher{rdb}
 }
 
 func TestRedisPublisherTestSuite(t *testing.T) {
@@ -32,29 +43,25 @@ func TestRedisPublisherTestSuite(t *testing.T) {
 }
 
 func (suite *RedisPublisherTestSuite) TestPublish() {
-	suite.mockRedisPublish.Return(redis.NewIntResult(int64(0), nil))
+	suite.Publish.Return(redis.NewIntResult(int64(0), nil))
 
-	payload := []byte("hello")
-
-	err := suite.pub.Publish(context.Background(), RedisPublisherTestChannel, payload)
+	err := suite.Publisher.Publish(context.Background(), suite.Topic, suite.Event)
 
 	suite.Nil(err)
 }
 
 func (suite *RedisPublisherTestSuite) TestPublish_Error() {
-	suite.mockRedisPublish.Return(redis.NewIntResult(int64(0), &net.OpError{}))
+	suite.Publish.Return(redis.NewIntResult(int64(0), &net.OpError{}))
 
-	payload := []byte("hello")
-
-	err := suite.pub.Publish(context.Background(), RedisPublisherTestChannel, payload)
+	err := suite.Publisher.Publish(context.Background(), suite.Topic, suite.Event)
 
 	suite.Equal(ErrPublisherGone, err)
 }
 
 func (suite *RedisPublisherTestSuite) TestPublish_BadInput() {
-	suite.mockRedisPublish.Return(redis.NewIntResult(int64(0), nil))
+	suite.Publish.Return(redis.NewIntResult(int64(0), nil))
 
-	err := suite.pub.Publish(context.Background(), RedisPublisherTestChannel, []byte{})
+	err := suite.Publisher.Publish(context.Background(), "", suite.Event)
 
 	suite.Equal(ErrPublisher, err)
 }
