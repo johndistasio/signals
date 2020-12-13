@@ -91,6 +91,7 @@ func (ws *WebsocketSession) Start() {
 	_, message, err := ws.conn.ReadMessage()
 
 	if err != nil {
+		// TODO make read timeout error more obvious
 		ext.LogError(span, err)
 		_ = ws.close("handshake read failure")
 		return
@@ -246,6 +247,7 @@ func (ws *WebsocketSession) readLoop() {
 
 	for {
 		if _, _, err := ws.conn.NextReader(); err != nil {
+			// TODO trace
 			return
 		}
 	}

@@ -19,8 +19,6 @@ In the future, it could:
 
 ## Signaling
 
-TODO describe the intended request flow at a high level
-
 ### Endpoints
 
 The service exposes it's endpoints via HTTP/1.x on the port specified by the `--addr` flag or `SIGNALS_ADDR` environment variable (default `:8080`).
@@ -45,7 +43,7 @@ Messages exchanged with the service use a JSON format:
 
 #### `GET /call/{call}`
 
-Joins the call identified by `{call}`. On a successful join, this endpoint returns a JSON message used to connect
+Joins the call identified by `{call}`. On a successful join, this endpoint returns a handshake message used to connect
 to the `/ws` endpoint for peering updates:
 
 ```json
@@ -62,6 +60,37 @@ Return Codes:
 
 * `200`: Successful call join.
 * `409`: No seats are available for the specified call.
+
+#### `GET /ws`
+
+Establishes a websocket connection for receiving peering data and maintaining presence within a room.
+
+##### Handshake
+
+A client must forward the handshake message received from the `GET /call/{call}` endpoint immediately after opening a
+websocket connection. Upon receipt of a valid handshake message, the websocket server will respond with:
+
+```json
+{
+  "kind": "WELCOME",
+  "call": "<call>"
+}
+```
+
+The websocket server will then forward peering events to the client. The server ignores messages sent by the client.
+
+The server will close the websocket connection if:
+
+* The client does not send the handshake before the configured timeout.
+* The handshake message is malformed.
+* The client's session has expired.
+
+##### Presence
+
+The websocket connection maintains the client's presence on a call. The server will send a websocket `PING` on a
+configurable interval. If the client responds with a `PONG` then the server will renew their session for the call.
+
+The server will close the connection if the client's session cannot be renewed.
 
 #### `POST /signal`
 
@@ -81,22 +110,6 @@ Return codes:
 
 * `200`: Successful publish (this does not guarantee that any other clients have received the published data).
 * `409`: Attempted to publish to a room that the client isn't a member of.
-
-#### `GET /ws`
-
-Establishes a websocket connection for receiving peering data and maintaining presence within a room.
-
-##### Handshake
-
-todo
-
-##### Presence
-
-todo
-
-##### Peering Data
-
-todo
 
 ## Healthcheck & Debug Endpoints
 
