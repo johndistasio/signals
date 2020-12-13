@@ -7,27 +7,15 @@ import (
 )
 
 func TestEvent_Unmarshal(t *testing.T) {
-	raw := `{"kind": "PEER", "body": "test"}`
+	raw := `{"kind": "PEER", "body": "testBody", "call": "testCall", "session": "testSession"}`
 
 	var event Event
 
 	err := json.Unmarshal([]byte(raw), &event)
 
 	assert.Nil(t, err)
-	assert.Equal(t, MessageKindPeer, event.Kind)
-	assert.Equal(t, "test", event.Body)
-}
-
-func TestInternalEvent_Marshal(t *testing.T) {
-	raw := `{"kind": "PEER", "body": "test", "peerId": "testPeer", "callId": "testCall"}`
-
-	var event InternalEvent
-
-	err := json.Unmarshal([]byte(raw), &event)
-
-	assert.Nil(t, err)
-	assert.Equal(t, MessageKindPeer, event.Kind)
-	assert.Equal(t, "test", event.Body)
-	assert.Equal(t, "testPeer", event.PeerId)
-	assert.Equal(t, "testCall", event.CallId)
+	assert.Equal(t, MessageKindPeerJoin, event.Kind)
+	assert.Equal(t, "testBody", event.Body)
+	assert.Equal(t, "testCall", event.Call)
+	assert.Equal(t, "testSession", event.Session)
 }

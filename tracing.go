@@ -87,7 +87,7 @@ func (mux *TracingMux) Handle(pattern string, handler http.Handler) {
 		ext.PeerAddress.Set(span, r.RemoteAddr)
 		span.SetTag("http.content_type", r.Header["Content-Type"])
 
-		w2 := &TracingResponseWriter{w, 0}
+		w2 := &TracingResponseWriter{w, 200}
 
 		handler.ServeHTTP(w2, r.WithContext(ctx))
 

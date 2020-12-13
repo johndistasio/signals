@@ -1,6 +1,10 @@
-signaling
+# built binary
+signals
+
 *.rdb
 
 *.test
 
 .idea/
+
+node_modules/

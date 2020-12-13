@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Signals</title>
+    <style>
+      textarea {
+        resize: none;
+      }
+      .controls {
+        margin: 10px;
+      }
+      .console-container {
+        display: flex;
+        flex-direction: column;
+      }
+      .console {
+        display: flex;
+        flex-direction: column;
+        margin: 10px;
+      }
+    </style>
+    <script src="./index.js"></script>
+  </head>
+  <body>
+    <h1>Signals Websocket</h1>
+    <div>
+      <div class="controls">
+        <div>
+          <input id="callInput" type="text" placeholder="Enter Call Here"></input>
+          <button id="connectButton" onClick="connect()">Connect</button>
+          <button id="disconnectButton" onClick="disconnect()" disabled>Disconnect</button>
+        </div>
+        <div>
+          <input id="messageInput" type="text" placeholder="Enter Message Here"></input>
+          <button id="sendButton" onClick="send()" disabled>Send</button>
+        </div>
+      </div>
+      <div class="console-container">
+        <div class="console">
+          <textarea id="display" rows="30" readonly></textarea>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

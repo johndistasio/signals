@@ -1,4 +1,4 @@
-module github.com/johndistasio/signaling
+module github.com/johndistasio/signals
 
 go 1.14
 

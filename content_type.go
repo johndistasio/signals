@@ -5,33 +5,36 @@ import (
 	"net/http"
 )
 
-var ContentTypeHandler = func(next http.Handler, mimeTypes ...string) http.Handler {
+type ContentTypeMiddleware struct {
+	MimeTypes []string
+}
 
+func (c *ContentTypeMiddleware) Handle(next http.Handler) http.Handler {
 	mimeMap := make(map[string]int)
 
-	for _, val := range mimeTypes {
+	for _, val := range c.MimeTypes {
 		mimeMap[val] = 1
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		span, ctx := opentracing.StartSpanFromContext(r.Context(), "ContentTypeHandler")
+		span, ctx := opentracing.StartSpanFromContext(r.Context(), "ContentTypeMiddleware")
 		defer span.Finish()
 
-		if len(mimeTypes) > 0 {
-			mime := r.Header["Content-Type"]
+		mime := r.Header["Content-Type"]
 
-			if mime == nil || len(mime) != 1 {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-
-			if mimeMap[mime[0]] == 0 {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
+		if mime == nil || len(mime) != 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 
-		next.ServeHTTP(w, r.WithContext(ctx))
+		if mimeMap[mime[0]] == 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		if next != nil  {
+			next.ServeHTTP(w, r.WithContext(ctx))
+		}
 	})
 }
 

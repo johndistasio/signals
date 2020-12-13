@@ -1,49 +1,71 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/ext"
 	"net/http"
 )
 
 type SeatHandler struct {
-	Lock Semaphore
-	Pub  Publisher
+	Generator func(context.Context) string
+	Lock      Semaphore
+	Publisher Publisher
 }
 
-func (s *SeatHandler) Handle(callId string, sessionId string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SeatHandler")
-		defer span.Finish()
+// Attempts to reserve a seat for the client in the call specified by the path. On success, emits a "new peer" event
+// for other clients in the room and returns a token that the client can use to send and receive signals from other
+// clients. On failure, returns 404 when no call is specified, 409 when no seats are available on the call, and
+// 500 otherwise.
+func (sh *SeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	span, ctx := opentracing.StartSpanFromContext(r.Context(), "SeatHandler.ServeHTTP")
+	defer span.Finish()
 
-		acq, err := s.Lock.Acquire(ctx, callId, sessionId)
+	call := ExtractCallId(ctx, r)
 
-		if err != nil {
-			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
-			return
-		}
+	if call == "" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 
-		if !acq {
-			w.WriteHeader(http.StatusConflict)
-			return
-		}
+	session := sh.Generator(ctx)
 
-		event, _ := json.Marshal(InternalEvent{
-			Event: Event{
-				Kind: MessageKindPeer,
-			},
-			PeerId: sessionId,
-			CallId: callId,
-		})
+	acq, err := sh.Lock.Acquire(ctx, call, session)
 
-		err = s.Pub.Publish(ctx, callId, event)
+	if err != nil {
+		ext.LogError(span, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 
-		if err != nil {
-			_ = s.Lock.Release(ctx, callId, sessionId)
-			http.Error(w, "publisher backend unavailable", http.StatusInternalServerError)
-			return
-		}
+	if !acq {
+		w.WriteHeader(http.StatusConflict)
+		return
+	}
 
-		w.WriteHeader(http.StatusNoContent)
+	event := Event{
+		Kind:    MessageKindPeerJoin,
+		Call:    call,
+		Session: session,
+	}
+
+	err = sh.Publisher.Publish(ctx, call, event)
+
+	if err != nil {
+		_ = sh.Lock.Release(ctx, call, session)
+		ext.LogError(span, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	encoded, _ := json.Marshal(Event{
+		Kind:    MessageKindJoin,
+		Call:    call,
+		Session: session,
 	})
+
+	_, _ = w.Write(encoded)
 }

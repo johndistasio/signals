@@ -12,17 +12,19 @@ import (
 )
 
 var (
-	addr      = kingpin.Flag("addr", "Host:port for service endpoints.").Envar("SIGNAL_ADDR").Default(":8080").TCP()
-	infraAddr = kingpin.Flag("infra-addr", "Host:port for infrastructure endpoints.").Envar("SIGNAL_INFRA_ADDR").Default(":8090").TCP()
-	origin    = kingpin.Flag("origin", "Origin for CORS.").Envar("SIGNAL_ORIGIN").Default("http://localhost:8080").URL()
+	addr        = kingpin.Flag("addr", "Host:port for service endpoints.").Envar("SIGNALS_ADDR").Default(":8080").TCP()
+	healthzAddr = kingpin.Flag("healthz-addr", "Host:port for healthcheck endpoints.").Envar("SIGNALS_HEALTHZ_ADDR").Default(":8090").TCP()
+	origin      = kingpin.Flag("origin", "Origin for CORS.").Envar("SIGNALS_ORIGIN").Default("http://localhost:8080").URL()
 
-	redisAddr = kingpin.Flag("redis-addr", "Redis host:addr.").Envar("SIGNAL_REDIS_ADDR").Default("localhost:6379").TCP()
+	redisAddr = kingpin.Flag("redis-addr", "Redis host:addr.").Envar("SIGNALS_REDIS_ADDR").Default("localhost:6379").TCP()
 
-	seatCount  = kingpin.Flag("seat-count", "Max clients for signaling session.").Envar("SIGNAL_SEAT_COUNT").Default("2").Int()
-	seatMaxAge = kingpin.Flag("seat-max-age", "Max age for signaling session seat.").Envar("SIGNAL_SEAT_MAX_AGE").Default("30s").Duration()
+	seatCount   = kingpin.Flag("seat-count", "Max clients for signaling session.").Envar("SIGNALS_SEAT_COUNT").Default("2").Int()
+	seatTimeout = kingpin.Flag("seat-timeout", "Timeout for signaling session seat.").Envar("SIGNALS_SEAT_TIMEOUT").Default("30s").Duration()
 
-	wsPingInterval = kingpin.Flag("ws-ping-interval", "Time between websocket client liveliness check.").Envar("SIGNAL_WS_PING_INTERVAL").Default("5s").Duration()
-	wsReadTimeout  = kingpin.Flag("ws-read-timeout", "Max time between websocket reads. Must be greater then ping interval.").Envar("SIGNAL_WS_READ_TIMEOUT").Default("10s").Duration()
+	wsHandshakeTimeout = kingpin.Flag("ws-handshake-timeout", "Max time for websocket upgrade handshake (zero = no timeout).").Envar("SIGNALS_WS_HANDSHAKE_TIMEOUT").Default("0s").Duration()
+	wsJoinTimeout      = kingpin.Flag("ws-join-timeout", "Max time for call join handshake (zero = no timeout).").Envar("SIGNALS_WS_JOIN_TIMEOUT").Default("0s").Duration()
+	wsPingInterval     = kingpin.Flag("ws-ping-interval", "Time between websocket client liveliness check.").Envar("SIGNALS_WS_PING_INTERVAL").Default("5s").Duration()
+	wsReadTimeout      = kingpin.Flag("ws-read-timeout", "Max time between websocket reads. Must be greater then ping interval.").Envar("SIGNALS_WS_READ_TIMEOUT").Default("10s").Duration()
 )
 
 func main() {
@@ -40,7 +42,59 @@ func main() {
 
 	rdb := redis.NewClient(&redis.Options{Addr: (*redisAddr).String()})
 
-	http.Handle("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Initialize application server
+	mux := NewTracingMux()
+
+	locker := &RedisSemaphore{
+		Age:   *seatTimeout,
+		Count: *seatCount,
+		Redis: rdb,
+	}
+
+	publisher := &RedisPublisher{rdb}
+
+	corsOrigin := (*origin).String()
+	corsHeaders := []string{"Cache-Control", "Content-Type", "User-Agent"}
+
+	getMiddleware := &CORSHandler{Origin: corsOrigin, Headers: corsHeaders, Methods: []string{"GET"}}
+	postMiddleware := &CORSHandler{Origin: corsOrigin, Headers: corsHeaders, Methods: []string{"POST"}}
+	jsonMiddleware := &ContentTypeMiddleware{MimeTypes: []string{"application/json"}}
+
+	callHandler := getMiddleware.Handle(&SeatHandler{GenerateSessionId, locker, publisher})
+
+	signalHandler := postMiddleware.Handle(jsonMiddleware.Handle(&SignalHandler{
+		Lock:      locker,
+		Publisher: publisher,
+		MaxRead:   512,
+	}))
+
+	wsHandler := getMiddleware.Handle(
+		&WebsocketHandler{
+			lock:  locker,
+			redis: rdb,
+			opts: &WebsocketSessionOptions{
+				JoinTimeout:  *wsJoinTimeout,
+				ReadTimeout:  *wsReadTimeout,
+				PingInterval: *wsPingInterval,
+			},
+			upgrader: websocket.Upgrader{
+				// Delegate XSS prevention to CORSHandler.
+				CheckOrigin:      func(*http.Request) bool { return true },
+				HandshakeTimeout: *wsHandshakeTimeout,
+			},
+		})
+
+	mux.Handle("/call/", callHandler)
+	mux.Handle("/signal", signalHandler)
+	mux.Handle("/ws", wsHandler)
+
+	server := &http.Server{
+		Addr:    (*addr).String(),
+		Handler: mux,
+	}
+
+	// Initialize healthchecks using the default server
+	http.Handle("/healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s, err := rdb.Ping(context.Background()).Result()
 
 		if err != nil {
@@ -58,73 +112,20 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	}))
 
+	// Start healthcheck server
 	go func() {
-		log.Printf("Starting signals infra server on %s\n", (*infraAddr).String())
-		err := http.ListenAndServe((*infraAddr).String(), nil)
+		addr := (*healthzAddr).String()
+
+		log.Printf("Starting signals healthcheck server on %s\n", addr)
+
+		err := http.ListenAndServe(addr, nil)
 
 		if err != nil {
-			log.Fatalf("fatal: infra: %v\n", err)
+			log.Fatalf("fatal: healthcheck server: %v\n", err)
 		}
 	}()
 
-	locker := &RedisSemaphore{
-		Age:   *seatMaxAge,
-		Count: *seatCount,
-		Redis: rdb,
-	}
-
-	publisher := &RedisPublisher{rdb}
-
-	mux := NewTracingMux()
-
-	corsHandler := &CORSHandler{
-		Origin: (*origin).String(),
-		Headers: []string{
-			SessionHeader,
-			"Cache-Control",
-			"Content-Type",
-			"User-Agent",
-		},
-	}
-
-	sessionHandler := &SessionHandler{
-		ExtractCallId:     ExtractCallId,
-		CreateSessionId:   GenerateSessionId,
-		ValidateSessionId: ParseSessionId,
-	}
-
-	callHandler := corsHandler.Handle(
-		sessionHandler.Handle(
-			&SeatHandler{locker, publisher}))
-
-	signalHandler := corsHandler.Handle(
-		sessionHandler.Handle(
-			&SignalHandler{locker, publisher, 512}), "POST")
-
-	wsHandler := corsHandler.Handle(
-		sessionHandler.Handle(
-			&WebsocketHandler{
-				lock:         locker,
-				redis:        rdb,
-				readTimeout:  *wsReadTimeout,
-				pingInterval: *wsPingInterval,
-
-				// TODO expose more of this configuration via flags
-				upgrader: websocket.Upgrader{
-					// Delegate XSS prevention to CORSHandler.
-					CheckOrigin: func(*http.Request) bool { return true },
-				},
-			}))
-
-	mux.Handle("/call/", callHandler)
-	mux.Handle("/signal/", signalHandler)
-	mux.Handle("/ws/", wsHandler)
-
-	server := &http.Server{
-		Addr:    (*addr).String(),
-		Handler: mux,
-	}
-
+	// Start application server
 	log.Printf("Starting signals server on %s\n", (*addr).String())
 
 	if err = server.ListenAndServe(); err != nil {
