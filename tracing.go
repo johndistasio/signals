@@ -89,6 +89,8 @@ func (mux *TracingMux) Handle(pattern string, handler http.Handler) {
 
 		w2 := &TracingResponseWriter{w, 200}
 
+		_ = tracer.Inject(span.Context(), opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(w2.Header()))
+
 		handler.ServeHTTP(w2, r.WithContext(ctx))
 
 		ext.HTTPStatusCode.Set(span, uint16(w2.code))
