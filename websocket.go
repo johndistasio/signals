@@ -102,7 +102,7 @@ func (ws *WebsocketSession) Start() {
 	err = json.Unmarshal(message, &join)
 
 	if err != nil {
-		span.LogFields(log.String("close", err.Error()))
+		span.LogFields(log.Message("closing connection on malformed handshake"))
 		_ = ws.close("bad handshake")
 		return
 	}
@@ -110,7 +110,7 @@ func (ws *WebsocketSession) Start() {
 	valid := ValidateClientHandshake(ctx, join)
 
 	if !valid {
-		span.LogFields(log.String("close", "bad handshake"))
+		span.LogFields(log.Message("closing connection on bad handshake"))
 		_ = ws.close("bad handshake")
 		return
 	}
@@ -129,7 +129,7 @@ func (ws *WebsocketSession) Start() {
 	}
 
 	if !held {
-		span.LogFields(log.String("close", "lock not held"))
+		span.LogFields(log.Message("closing connection on expired or invalid session id"))
 		_ = ws.close("bad seat")
 		return
 	}
@@ -315,7 +315,7 @@ func (ws *WebsocketSession) onPeerEvent(message []byte) error {
 	valid := ValidatePeerEvent(ctx, ws.call, peer)
 
 	if !valid {
-		span.LogFields(log.String("skip", "invalid event"))
+		span.LogFields(log.Message("aborted on invalid event"))
 		return nil
 	}
 
@@ -332,7 +332,7 @@ func (ws *WebsocketSession) onPeerEvent(message []byte) error {
 
 	// Don't send echo'd messages back to clients.
 	if peer.Session == ws.session {
-		span.LogFields(log.String("skip", "echo event"))
+		span.LogFields(log.Message("aborted on echo"))
 		return nil
 	}
 

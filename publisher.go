@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
-	"github.com/opentracing/opentracing-go/log"
 )
 
 var ErrPublisher = errors.New("publisher client error")
@@ -28,7 +28,7 @@ func (r *RedisPublisher) Publish(ctx context.Context, topic string, event interf
 	defer span.Finish()
 
 	if topic == "" {
-		span.LogFields(log.String("info", "empty topic"))
+		ext.LogError(span, fmt.Errorf("empty topic"))
 		return ErrPublisher
 	}
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"io"
@@ -86,6 +87,7 @@ func (r *RedisSemaphore) Acquire(ctx context.Context, name string, id string) (b
 	defer span.Finish()
 
 	if name == "" || id == "" {
+		ext.LogError(span, fmt.Errorf("empty semaphore name or id"))
 		return false, ErrSemaphore
 	}
 
@@ -112,6 +114,7 @@ func (r *RedisSemaphore) Check(ctx context.Context, name string, id string) (boo
 	defer span.Finish()
 
 	if name == "" || id == "" {
+		ext.LogError(span, fmt.Errorf("empty semaphore name or id"))
 		return false, ErrSemaphore
 	}
 
@@ -134,6 +137,7 @@ func (r *RedisSemaphore) Release(ctx context.Context, name string, id string) er
 	defer span.Finish()
 
 	if name == "" || id == "" {
+		ext.LogError(span, fmt.Errorf("empty semaphore name or id"))
 		return ErrSemaphore
 	}
 

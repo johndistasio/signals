@@ -30,7 +30,7 @@ func (suite *SeatHandlerTestSuite) SetupTest() {
 	suite.URL = "http://localhost/call/" + suite.Call
 
 	suite.Handler = &SeatHandler{
-		Generator: func(_ context.Context) string { return suite.Session },
+		Generator: func(_ context.Context) (string, error) { return suite.Session, nil },
 		Lock:      suite.Lock,
 		Publisher: suite.Publisher,
 	}
@@ -78,6 +78,16 @@ func (suite *SeatHandlerTestSuite) TestSeatHandler_ServeHTTP() {
 // Validate that we return a 404 to the client when they don't provide a call in the request URL.
 func (suite *SeatHandlerTestSuite) TestSeatHandler_ServeHTTP_NoCall() {
 	req := httptest.NewRequest("GET", "http://localhost/call", nil)
+	w := httptest.NewRecorder()
+
+	suite.Handler.ServeHTTP(w, req)
+
+	suite.Equal(404, w.Result().StatusCode)
+}
+
+// Validate that we return a 404 to the client when they request an invalid path.
+func (suite *SeatHandlerTestSuite) TestSeatHandler_ServeHTTP_InvalidPath() {
+	req := httptest.NewRequest("GET", "http://localhost/call/12345/extra", nil)
 	w := httptest.NewRecorder()
 
 	suite.Handler.ServeHTTP(w, req)
