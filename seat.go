@@ -6,10 +6,11 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"net/http"
+	"strings"
 )
 
 type SeatHandler struct {
-	Generator func(context.Context) string
+	Generator func(context.Context) (string, error)
 	Lock      Semaphore
 	Publisher Publisher
 }
@@ -22,14 +23,24 @@ func (sh *SeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	span, ctx := opentracing.StartSpanFromContext(r.Context(), "SeatHandler.ServeHTTP")
 	defer span.Finish()
 
-	call := ExtractCallId(ctx, r)
+	var call string
 
-	if call == "" {
+	segments := strings.Split(strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/"), "/")
+
+	if len(segments) == 2 && segments[1] != "" {
+		call = segments[1]
+	} else {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	session := sh.Generator(ctx)
+	session, err := sh.Generator(ctx)
+
+	if err != nil {
+		ext.LogError(span, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 
 	acq, err := sh.Lock.Acquire(ctx, call, session)
 
