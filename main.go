@@ -56,8 +56,8 @@ func main() {
 	corsOrigin := (*origin).String()
 	corsHeaders := []string{"Cache-Control", "Content-Type", "User-Agent"}
 
-	getMiddleware := &CORSHandler{Origin: corsOrigin, Headers: corsHeaders, Methods: []string{"GET"}}
-	postMiddleware := &CORSHandler{Origin: corsOrigin, Headers: corsHeaders, Methods: []string{"POST"}}
+	getMiddleware := &CORSMiddleware{Origin: corsOrigin, Headers: corsHeaders, Methods: []string{"GET"}}
+	postMiddleware := &CORSMiddleware{Origin: corsOrigin, Headers: corsHeaders, Methods: []string{"POST"}}
 	jsonMiddleware := &ContentTypeMiddleware{MimeTypes: []string{"application/json"}}
 
 	callHandler := getMiddleware.Handle(&SeatHandler{GenerateSessionId, locker, publisher})
@@ -78,13 +78,13 @@ func main() {
 				PingInterval: *wsPingInterval,
 			},
 			upgrader: websocket.Upgrader{
-				// Delegate XSS prevention to CORSHandler.
+				// Delegate XSS prevention to CORSMiddleware.
 				CheckOrigin:      func(*http.Request) bool { return true },
 				HandshakeTimeout: *wsHandshakeTimeout,
 			},
 		})
 
-	mux.Handle("/call/", callHandler)
+	mux.HandleName("/call/", "/call/{call}", callHandler)
 	mux.Handle("/signal", signalHandler)
 	mux.Handle("/ws", wsHandler)
 
