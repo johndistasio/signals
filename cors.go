@@ -7,13 +7,13 @@ import (
 	"strings"
 )
 
-type CORSHandler struct {
+type CORSMiddleware struct {
 	Origin  string
 	Headers []string
 	Methods []string
 }
 
-func (c *CORSHandler) Handle(next http.Handler) http.Handler {
+func (c *CORSMiddleware) Handle(next http.Handler) http.Handler {
 
 	methodsHash := make(map[string]int)
 
@@ -38,7 +38,7 @@ func (c *CORSHandler) Handle(next http.Handler) http.Handler {
 	headersString := strings.Join(c.Headers, ", ")
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		span, ctx := opentracing.StartSpanFromContext(r.Context(), "CORSHandler")
+		span, ctx := opentracing.StartSpanFromContext(r.Context(), "CORSMiddleware")
 		defer span.Finish()
 
 		w.Header().Set("Access-Control-Allow-Headers", headersString)
