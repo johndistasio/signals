@@ -84,7 +84,7 @@ func main() {
 			},
 		})
 
-	mux.Handle("/call/", callHandler)
+	mux.HandleName("/call/", "/call/{call}", callHandler)
 	mux.Handle("/signal", signalHandler)
 	mux.Handle("/ws", wsHandler)
 
