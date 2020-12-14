@@ -5,8 +5,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"github.com/segmentio/ksuid"
-	"net/http"
-	"strings"
 )
 
 const MessageKindJoin = "JOIN"
@@ -51,17 +49,4 @@ func ParseSessionId(ctx context.Context, id string) bool {
 	}
 
 	return true
-}
-
-func ExtractCallId(ctx context.Context, r *http.Request) string {
-	span, ctx := opentracing.StartSpanFromContext(ctx, "ExtractCallId")
-	defer span.Finish()
-
-	segments := strings.Split(strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/"), "/")
-
-	if len(segments) >= 2 {
-		return segments[1]
-	}
-
-	return ""
 }

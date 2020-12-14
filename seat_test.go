@@ -85,6 +85,16 @@ func (suite *SeatHandlerTestSuite) TestSeatHandler_ServeHTTP_NoCall() {
 	suite.Equal(404, w.Result().StatusCode)
 }
 
+// Validate that we return a 404 to the client when they request an invalid path.
+func (suite *SeatHandlerTestSuite) TestSeatHandler_ServeHTTP_InvalidPath() {
+	req := httptest.NewRequest("GET", "http://localhost/call/12345/extra", nil)
+	w := httptest.NewRecorder()
+
+	suite.Handler.ServeHTTP(w, req)
+
+	suite.Equal(404, w.Result().StatusCode)
+}
+
 // Validate that we return a 409 to the client when no seats are available.
 func (suite *SeatHandlerTestSuite) TestSeatHandler_ServeHTTP_NoSeatAvailable() {
 	suite.Lock.On("Acquire", mock.Anything, suite.Call, suite.Session).Return(
