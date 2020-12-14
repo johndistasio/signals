@@ -30,7 +30,7 @@ func (suite *SeatHandlerTestSuite) SetupTest() {
 	suite.URL = "http://localhost/call/" + suite.Call
 
 	suite.Handler = &SeatHandler{
-		Generator: func(_ context.Context) string { return suite.Session },
+		Generator: func(_ context.Context) (string, error) { return suite.Session, nil },
 		Lock:      suite.Lock,
 		Publisher: suite.Publisher,
 	}

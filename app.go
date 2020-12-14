@@ -26,7 +26,7 @@ type Event struct {
 	Kind    string `json:"kind,omitempty"`
 }
 
-func GenerateSessionId(ctx context.Context) string {
+func GenerateSessionId(ctx context.Context) (string, error) {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "GenerateSessionId")
 	defer span.Finish()
 
@@ -34,10 +34,10 @@ func GenerateSessionId(ctx context.Context) string {
 
 	if err != nil {
 		ext.LogError(span, err)
-		return ""
+		return "", err
 	}
 
-	return id.String()
+	return id.String(), nil
 }
 
 func ParseSessionId(ctx context.Context, id string) bool {
