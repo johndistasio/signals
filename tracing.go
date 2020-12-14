@@ -75,10 +75,14 @@ func NewTracingMux() *TracingMux {
 }
 
 func (mux *TracingMux) Handle(pattern string, handler http.Handler) {
+	mux.HandleName(pattern, pattern, handler)
+}
+
+func (mux *TracingMux) HandleName(pattern string, spanName string, handler http.Handler) {
 	wrapper := http.HandlerFunc(func (w http.ResponseWriter, r *http.Request) {
 		tracer := opentracing.GlobalTracer()
 		spanCtx, _ := tracer.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(r.Header))
-		span := tracer.StartSpan(pattern, ext.RPCServerOption(spanCtx))
+		span := tracer.StartSpan(spanName, ext.RPCServerOption(spanCtx))
 		ctx := opentracing.ContextWithSpan(r.Context(), span)
 		defer span.Finish()
 
