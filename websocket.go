@@ -336,6 +336,9 @@ func (ws *WebsocketSession) onPeerEvent(message []byte) error {
 		return nil
 	}
 
+	// Blank out session token so peers can't impersonate each other.
+	peer.Session = ""
+
 	bytes, err := json.Marshal(peer)
 
 	if err != nil {
