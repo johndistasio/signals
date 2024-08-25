@@ -14,70 +14,52 @@ type SignalHandler struct {
 	MaxRead   int64
 }
 
-func (s *SignalHandler) Handle(callId string, sessionId string) http.Handler {
-	readLimit := s.MaxRead
+func (s *SignalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	span, ctx := opentracing.StartSpanFromContext(r.Context(), "SignalHandler")
+	defer span.Finish()
 
-	if readLimit == 0 {
-		readLimit = 512
+	body, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, s.MaxRead))
+
+	if err != nil {
+		ext.LogError(span, err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		span, ctx := opentracing.StartSpanFromContext(r.Context(), "SignalHandler")
-		defer span.Finish()
+	if len(body) < 1 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
-		acq, err := s.Lock.Check(ctx, callId, sessionId)
+	var event Event
 
-		if err != nil {
-			http.Error(w, "seat backend unavailable", http.StatusInternalServerError)
-			return
-		}
+	err = json.Unmarshal(body, &event)
 
-		if !acq {
-			w.WriteHeader(http.StatusConflict)
-			return
-		}
+	if  err != nil ||
+		event.Body == "" || event.Call == "" || event.Session == "" ||
+		(event.Kind != MessageKindOffer && event.Kind != MessageKindAnswer) {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
-		body, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, readLimit))
+	acq, err := s.Lock.Check(ctx, event.Call, event.Session)
 
-		if err != nil {
-			ext.LogError(span, err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+	if err != nil {
+		ext.LogError(span, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 
-		if len(body) < 0 {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+	if !acq {
+		w.WriteHeader(http.StatusConflict)
+		return
+	}
 
-		var event Event
+	err = s.Publisher.Publish(ctx, event.Call, event)
 
-		err = json.Unmarshal(body, &event)
-
-		if err != nil || event.Body == "" || (event.Kind != MessageKindOffer && event.Kind != MessageKindAnswer) {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		peerMessage := InternalEvent{
-			Event:  event,
-			PeerId: sessionId,
-			CallId: callId,
-		}
-
-		encoded, err := json.Marshal(peerMessage)
-
-		if err != nil {
-			ext.LogError(span, err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		err = s.Publisher.Publish(ctx, callId, encoded)
-
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-	})
+	if err != nil {
+		ext.LogError(span, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 }

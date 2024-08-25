@@ -4,7 +4,7 @@ This signaling service provides facilities for establishing bidirectional commun
 
 It does:
 1. Associate peers by using a rudimentary "room" concept built around a distributed counting semaphore.
-1. Provide clients with "an anonymous peer is available" events.
+1. Provide clients with "a peer is available" events.
 1. Provide clients with a transient session ID specific to the signaling service to allow clients with unreliable connections to rejoin their "room".
 1. Leverage a single Redis instance for all locking and messaging operations.
 
@@ -17,50 +17,103 @@ In the future, it could:
 1. Leverage auth provided by an external mechanism.
 1. Scale by delegating locking and messaging to separate Redis deployments, or different platforms entirely.
 
-## Service Endpoints
+## Signaling
 
-The service exposes it's endpoints via HTTP/1.x on the port specified by the `--addr` flag (default `:8080`).
+### Endpoints
 
-### Events
+The service exposes it's endpoints via HTTP/1.x on the port specified by the `--addr` flag or `SIGNALS_ADDR` environment variable (default `:8080`).
 
-Events are JSON messages in the following format:
+#### Message Format
+
+Messages exchanged with the service use a JSON format:
 
 ```json
 {
-    "kind": "ENUM",
-    "body": "STRING"
+  "body": STRING,
+  "call": STRING,
+  "kind": STRING,
+  "session": STRING,
 }
 ```
 
-`kind` is a string enumeration that accepts one of these values:
- * `PEER`: Indicates that a peer is available.
- * `OFFER`: Indicates that the event body is an SDP offer.
- * `ANSWER`:  Indicates that the event body is an SDP answer.
+* `body` is an arbitrary string that is interpreted based upon the value of `kind`.
+* `call` 
+* `kind` is an enumeration that with endpoint-specific values.
+* `session` tbd
 
-`body` is an arbitrary string that should be interpreted based on the value of `kind`.
+#### `GET /call/{call}`
 
-### `GET /call/{call}`
+Joins the call identified by `{call}`. On a successful join, this endpoint returns a handshake message used to connect
+to the `/ws` endpoint for peering updates:
 
-Join the room identified by `{call}` or renew the lease on a seat in the room. Clients should periodically call this endpoint to renew their lease, at an interval smaller than the value of `--seat-max-age` (default `30s`).
+```json
+{
+  "kind": "JOIN",
+  "call": "<call>",
+  "session": "<session>"
+}
+```
 
-This endpoint returns `204` and a seat token in the `Seat` header on success.
+Where `<call>` is the call that was joined and `<session>` is a call membership token.
 
-A `409` is returned if there are no free seats.
+Return Codes:
 
-### `POST /signal/{call}`
+* `200`: Successful call join.
+* `409`: No seats are available for the specified call.
 
-Publishing peering data to other clients in room `{call}`. Data is not persistent; clients will only see data published after they've joined the room.
+#### `GET /ws`
 
-* Returns `200` on a successful publish (this does not guarantee that any other clients have received the published data).
-* Returns `409` when attempting to publish to a room that the client isn't a member of.
+Establishes a websocket connection for receiving peering data and maintaining presence within a room.
 
-### `GET /ws/{call}`
+##### Handshake
 
-Establishes a websocket connection for receiving published peering data as events (see above). Returns a `409` when attempting to subscribe to the data feed for a room that the client isn't a member of.
+A client must forward the handshake message received from the `GET /call/{call}` endpoint immediately after opening a
+websocket connection. Upon receipt of a valid handshake message, the websocket server will respond with:
 
-## Infrastructure Endpoints
+```json
+{
+  "kind": "WELCOME",
+  "call": "<call>"
+}
+```
 
-Infrastructure endpoints are served on the port specified by the `--infra-addr` flag (default `:8090`).
+The websocket server will then forward peering events to the client. The server ignores messages sent by the client.
+
+The server will close the websocket connection if:
+
+* The client does not send the handshake before the configured timeout.
+* The handshake message is malformed.
+* The client's session has expired.
+
+##### Presence
+
+The websocket connection maintains the client's presence on a call. The server will send a websocket `PING` on a
+configurable interval. If the client responds with a `PONG` then the server will renew their session for the call.
+
+The server will close the connection if the client's session cannot be renewed.
+
+#### `POST /signal`
+
+Publishes peering data to other clients in a room. Data is not persistent; clients will only see data published after 
+they've joined the room. Published data must adhere to this format:
+
+```json
+{
+  "kind": "OFFER|ANSWER",
+  "call": "<call>",
+  "session": "<session>",
+  "body": "<body>"
+}
+```
+
+Return codes:
+
+* `200`: Successful publish (this does not guarantee that any other clients have received the published data).
+* `409`: Attempted to publish to a room that the client isn't a member of.
+
+## Healthcheck & Debug Endpoints
+
+These endpoints are served on the port specified by the `--healthz-addr` flag or `SIGNALS_HEALTHZ_ADDR` environment variable (default `:8090`).
 
 * `/debug`: Pprof endpoint
-* `/health`: Service healthcheck endpoint; returns `200` on a healthy service.
+* `/healthz`: Service healthcheck endpoint; returns `200` on a healthy service.

@@ -9,8 +9,14 @@ import (
 
 var NoopHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 
+var testHeader = "X-For-Testing-Only"
+
 func TestCORSHandler (t *testing.T) {
-	handler := (&CORSHandler{"*", []string{SessionHeader}}).Handle(NoopHandler)
+	handler := (&CORSHandler{
+		Origin: "*",
+		Headers: []string{testHeader},
+		Methods: []string{"GET"},
+	}).Handle(NoopHandler)
 
 	req := httptest.NewRequest("GET", "http://example.com/foo", nil)
 	w := httptest.NewRecorder()
@@ -22,13 +28,13 @@ func TestCORSHandler (t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "GET, OPTIONS", resp.Header.Get("Access-Control-Allow-Methods"))
 	assert.Equal(t, "*", resp.Header.Get("Access-Control-Allow-Origin"))
-	assert.Equal(t, SessionHeader, resp.Header.Get("Access-Control-Allow-Headers"))
-	assert.Equal(t, SessionHeader, resp.Header.Get("Access-Control-Expose-Headers"))
+	assert.Equal(t, testHeader, resp.Header.Get("Access-Control-Allow-Headers"))
+	assert.Equal(t, testHeader, resp.Header.Get("Access-Control-Expose-Headers"))
 	assert.Equal(t, "60", resp.Header.Get("Access-Control-Max-Age"))
 }
 
 func TestCORSHandler_Options(t *testing.T) {
-	handler := (&CORSHandler{"*", []string{SessionHeader}}).Handle(NoopHandler)
+	handler := (&CORSHandler{Origin: "*", Headers: []string{}}).Handle(NoopHandler)
 
 	req := httptest.NewRequest("OPTIONS", "http://example.com/foo", nil)
 	w := httptest.NewRecorder()
@@ -39,7 +45,7 @@ func TestCORSHandler_Options(t *testing.T) {
 }
 
 func TestCORSHandler_DisallowedMethod (t *testing.T) {
-	handler := (&CORSHandler{"*", []string{SessionHeader}}).Handle(NoopHandler, "TRACE")
+	handler := (&CORSHandler{Origin: "*", Headers: []string{}}).Handle(NoopHandler)
 
 	req := httptest.NewRequest("POST", "http://example.com/foo", nil)
 	w := httptest.NewRecorder()
