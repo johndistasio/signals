@@ -9,15 +9,17 @@ It does:
 1. Leverage a single Redis instance for all locking and messaging operations.
 
 It does not:
-1. Do auth of any kind.
 1. Provide clients with "a peer disappeared" events.
+1. Provide clients with a way to uniquely identify peers beyond anything peers provide themselves.
 1. Attempt to prevent "room hijacking" beyond using a configurable timeout before new clients can replace dead ones.
 
-In the future, it could:
-1. Leverage auth provided by an external mechanism.
-1. Scale by delegating locking and messaging to separate Redis deployments, or different platforms entirely.
-
 ## Signaling
+
+The high-level client flow for signaling is:
+
+1. Join a call with `GET /call/{call}`; then
+1. Open a websocket connection with `/ws` for establishing presence and receiving peering data; then
+1. Send peering data with `POST /signal`.
 
 ### Endpoints
 
@@ -63,12 +65,14 @@ Return Codes:
 
 #### `GET /ws`
 
-Establishes a websocket connection for receiving peering data and maintaining presence within a room.
+Establishes a websocket connection for receiving peering data and maintaining presence within a room. After a successful
+handshake, the server sends peering data to clients through the websocket. The server ignores messages sent by the client.
 
 ##### Handshake
 
-A client must forward the handshake message received from the `GET /call/{call}` endpoint immediately after opening a
-websocket connection. Upon receipt of a valid handshake message, the websocket server will respond with:
+Establishing a websocket connection requires an application-level handshake. A client must forward the handshake message
+received from the `GET /call/{call}` endpoint immediately after opening a websocket connection. Upon receipt of a valid
+handshake message, the websocket server will respond with:
 
 ```json
 {
@@ -77,9 +81,9 @@ websocket connection. Upon receipt of a valid handshake message, the websocket s
 }
 ```
 
-The websocket server will then forward peering events to the client. The server ignores messages sent by the client.
+The websocket server will then forward peering events to the client.
 
-The server will close the websocket connection if:
+The server will close the websocket connection during the handshake phase if:
 
 * The client does not send the handshake before the configured timeout.
 * The handshake message is malformed.
@@ -90,7 +94,7 @@ The server will close the websocket connection if:
 The websocket connection maintains the client's presence on a call. The server will send a websocket `PING` on a
 configurable interval. If the client responds with a `PONG` then the server will renew their session for the call.
 
-The server will close the connection if the client's session cannot be renewed.
+The server will close the connection if the client's session cannot be renewed for any reason.
 
 #### `POST /signal`
 
@@ -113,7 +117,8 @@ Return codes:
 
 ## Healthcheck & Debug Endpoints
 
-These endpoints are served on the port specified by the `--healthz-addr` flag or `SIGNALS_HEALTHZ_ADDR` environment variable (default `:8090`).
+These endpoints are served on the port specified by the `--healthz-addr` flag or `SIGNALS_HEALTHZ_ADDR` environment variable
+(default `:8090`).
 
 * `/debug`: Pprof endpoint
 * `/healthz`: Service healthcheck endpoint; returns `200` on a healthy service.
