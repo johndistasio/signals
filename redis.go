@@ -38,14 +38,3 @@ type PubSub interface {
 func NewScript(src string) *impl.Script {
 	return impl.NewScript(src)
 }
-
-func NewRedisClient() Redis {
-	// TODO expose these and other options
-	opts := &impl.Options{
-		Addr:     "localhost:6379",
-		Password: "", // no password set
-		DB:       0,  // use default DB
-	}
-
-	return impl.NewClient(opts)
-}
