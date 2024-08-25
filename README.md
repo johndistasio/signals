@@ -29,17 +29,17 @@ Messages exchanged with the service use a JSON format:
 
 ```json
 {
-  "body": STRING,
-  "call": STRING,
-  "kind": STRING,
-  "session": STRING,
+  "kind": "string",
+  "call": "string",
+  "session": "string",
+  "body": "string"
 }
 ```
 
-* `body` is an arbitrary string that is interpreted based upon the value of `kind`.
-* `call` 
 * `kind` is an enumeration that with endpoint-specific values.
-* `session` tbd
+* `call` is the name of the call.
+* `session` is a session ID for the call.
+* `body` is an arbitrary string that is interpreted based upon the value of `kind`.
 
 #### `GET /call/{call}`
 
